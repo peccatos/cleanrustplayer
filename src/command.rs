@@ -1,18 +1,19 @@
-use std::str::FromStr;
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatModeArg {
     Off,
     One,
     All,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     List,
     Queue,
     Find(String),
     QueueFind(String),
+    Search(String),
+    Resolve(String),
+    PlayUrl(String),
     Play(usize),
     PlayName(String),
     Next,
@@ -35,102 +36,55 @@ pub enum Command {
 
 impl Command {
     pub fn parse(input: &str) -> Self {
-        let trimmed = input.trim();
-        let mut parts = trimmed.split_whitespace();
-        let cmd = parts.next().unwrap_or("");
+        let mut parts = input.split_whitespace();
+        let Some(cmd) = parts.next() else {
+            return Command::Help;
+        };
 
         match cmd {
             "list" => Command::List,
             "queue" => Command::Queue,
-            "find" => {
-                let query = parts.collect::<Vec<_>>().join(" ");
-                if query.is_empty() {
-                    Command::Unknown("find".to_string())
-                } else {
-                    Command::Find(query)
-                }
-            }
-            "queuefind" => {
-                let query = parts.collect::<Vec<_>>().join(" ");
-                if query.is_empty() {
-                    Command::Unknown("queuefind".to_string())
-                } else {
-                    Command::QueueFind(query)
-                }
-            }
-            "play" => {
-                let Some(raw_index) = parts.next() else {
-                    return Command::Unknown("play".to_string());
-                };
-
-                match usize::from_str(raw_index) {
-                    Ok(index) => Command::Play(index),
-                    Err(_) => Command::Unknown("play".to_string()),
-                }
-            }
-            "playname" => {
-                let query = parts.collect::<Vec<_>>().join(" ");
-                if query.is_empty() {
-                    Command::Unknown("playname".to_string())
-                } else {
-                    Command::PlayName(query)
-                }
-            }
+            "find" => Command::Find(parts.collect::<Vec<_>>().join(" ")),
+            "queuefind" => Command::QueueFind(parts.collect::<Vec<_>>().join(" ")),
+            "search" => Command::Search(parts.collect::<Vec<_>>().join(" ")),
+            "resolve" => Command::Resolve(parts.collect::<Vec<_>>().join(" ")),
+            "playurl" => Command::PlayUrl(parts.collect::<Vec<_>>().join(" ")),
+            "play" => match parts.next().and_then(|s| s.parse::<usize>().ok()) {
+                Some(index) => Command::Play(index),
+                None => Command::Unknown(input.to_string()),
+            },
+            "playname" => Command::PlayName(parts.collect::<Vec<_>>().join(" ")),
             "next" => Command::Next,
             "prev" => Command::Prev,
             "pause" => Command::Pause,
             "resume" => Command::Resume,
             "stop" => Command::Stop,
-            "volume" => {
-                let Some(raw_volume) = parts.next() else {
-                    return Command::Unknown("volume".to_string());
-                };
-
-                match f32::from_str(raw_volume) {
-                    Ok(volume) => Command::Volume(volume),
-                    Err(_) => Command::Unknown("volume".to_string()),
-                }
-            }
-            "seek" => {
-                let Some(raw_secs) = parts.next() else {
-                    return Command::Unknown("seek".to_string());
-                };
-
-                match u64::from_str(raw_secs) {
-                    Ok(secs) => Command::Seek(secs),
-                    Err(_) => Command::Unknown("seek".to_string()),
-                }
-            }
+            "volume" => match parts.next().and_then(|s| s.parse::<f32>().ok()) {
+                Some(v) => Command::Volume(v),
+                None => Command::Unknown(input.to_string()),
+            },
+            "seek" => match parts.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(sec) => Command::Seek(sec),
+                None => Command::Unknown(input.to_string()),
+            },
             "pos" => Command::Pos,
-            "repeat" => {
-                let Some(raw_mode) = parts.next() else {
-                    return Command::Unknown("repeat".to_string());
-                };
-
-                match raw_mode {
-                    "off" => Command::Repeat(RepeatModeArg::Off),
-                    "one" => Command::Repeat(RepeatModeArg::One),
-                    "all" => Command::Repeat(RepeatModeArg::All),
-                    _ => Command::Unknown("repeat".to_string()),
-                }
-            }
-            "shuffle" => {
-                let Some(raw_value) = parts.next() else {
-                    return Command::Unknown("shuffle".to_string());
-                };
-
-                match raw_value {
-                    "on" => Command::Shuffle(true),
-                    "off" => Command::Shuffle(false),
-                    _ => Command::Unknown("shuffle".to_string()),
-                }
-            }
+            "repeat" => match parts.next() {
+                Some("off") => Command::Repeat(RepeatModeArg::Off),
+                Some("one") => Command::Repeat(RepeatModeArg::One),
+                Some("all") => Command::Repeat(RepeatModeArg::All),
+                _ => Command::Unknown(input.to_string()),
+            },
+            "shuffle" => match parts.next() {
+                Some("on") => Command::Shuffle(true),
+                Some("off") => Command::Shuffle(false),
+                _ => Command::Unknown(input.to_string()),
+            },
             "status" => Command::Status,
             "snapshot" => Command::Snapshot,
             "reload" => Command::Reload,
             "help" => Command::Help,
-            "exit" => Command::Exit,
-            other => Command::Unknown(other.to_string()),
+            "exit" | "quit" => Command::Exit,
+            _ => Command::Unknown(input.to_string()),
         }
     }
 }
