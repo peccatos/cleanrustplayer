@@ -7,7 +7,7 @@ use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::Accessor;
 use lofty::probe::Probe;
 
-pub const DEFAULT_MUSIC_DIR: &str = "C:\\Users\\burav\\Music";
+pub const DEFAULT_MUSIC_DIR: &str = "C:\\Users\\name\\Music";
 
 const SUPPORTED_EXT: &[&str] = &["mp3", "flac", "wav", "m4a"];
 
