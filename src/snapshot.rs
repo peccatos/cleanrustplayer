@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
 pub struct TrackView {
     pub library_index: usize,
     pub label: String,
@@ -8,7 +10,7 @@ pub struct TrackView {
     pub path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QueueEntryView {
     pub queue_position: usize,
     pub library_index: usize,
@@ -17,7 +19,7 @@ pub struct QueueEntryView {
     pub duration_label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NowPlayingView {
     pub library_index: Option<usize>,
     pub label: String,
@@ -31,7 +33,7 @@ pub struct NowPlayingView {
     pub volume: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
     pub repeat_mode: String,
     pub shuffle_enabled: bool,
@@ -43,6 +45,14 @@ pub struct AppSnapshot {
 }
 
 impl AppSnapshot {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub fn print_json(&self) {
+        println!("{}", self.to_json());
+    }
+
     pub fn print_pretty(&self) {
         println!("Snapshot:");
         println!("  repeat_mode: {}", self.repeat_mode);
@@ -53,9 +63,15 @@ impl AppSnapshot {
         println!("  now_playing.label: {}", self.now_playing.label);
         println!("  now_playing.artist: {}", self.now_playing.artist);
         println!("  now_playing.album: {}", self.now_playing.album);
-        println!("  now_playing.duration: {}", self.now_playing.duration_label);
+        println!(
+            "  now_playing.duration: {}",
+            self.now_playing.duration_label
+        );
         println!("  now_playing.file_path: {}", self.now_playing.file_path);
-        println!("  now_playing.position_sec: {:.2}", self.now_playing.position_sec);
+        println!(
+            "  now_playing.position_sec: {:.2}",
+            self.now_playing.position_sec
+        );
         println!("  now_playing.paused: {}", self.now_playing.paused);
         println!("  now_playing.empty: {}", self.now_playing.empty);
         println!("  now_playing.volume: {}", self.now_playing.volume);
