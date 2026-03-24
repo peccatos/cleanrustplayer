@@ -1,0 +1,1 @@
+C:\Users\burav\Desktop\rustplayer\target\debug\replaycore-player.exe: C:\Users\burav\Desktop\rustplayer\src\app.rs C:\Users\burav\Desktop\rustplayer\src\command.rs C:\Users\burav\Desktop\rustplayer\src\main.rs C:\Users\burav\Desktop\rustplayer\src\music\library.rs C:\Users\burav\Desktop\rustplayer\src\music\mod.rs C:\Users\burav\Desktop\rustplayer\src\player.rs
