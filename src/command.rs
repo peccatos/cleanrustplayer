@@ -10,7 +10,11 @@ pub enum RepeatModeArg {
 #[derive(Debug)]
 pub enum Command {
     List,
+    Queue,
+    Find(String),
+    QueueFind(String),
     Play(usize),
+    PlayName(String),
     Next,
     Prev,
     Pause,
@@ -22,6 +26,7 @@ pub enum Command {
     Repeat(RepeatModeArg),
     Shuffle(bool),
     Status,
+    Snapshot,
     Reload,
     Help,
     Exit,
@@ -30,11 +35,29 @@ pub enum Command {
 
 impl Command {
     pub fn parse(input: &str) -> Self {
-        let mut parts = input.split_whitespace();
+        let trimmed = input.trim();
+        let mut parts = trimmed.split_whitespace();
         let cmd = parts.next().unwrap_or("");
 
         match cmd {
             "list" => Command::List,
+            "queue" => Command::Queue,
+            "find" => {
+                let query = parts.collect::<Vec<_>>().join(" ");
+                if query.is_empty() {
+                    Command::Unknown("find".to_string())
+                } else {
+                    Command::Find(query)
+                }
+            }
+            "queuefind" => {
+                let query = parts.collect::<Vec<_>>().join(" ");
+                if query.is_empty() {
+                    Command::Unknown("queuefind".to_string())
+                } else {
+                    Command::QueueFind(query)
+                }
+            }
             "play" => {
                 let Some(raw_index) = parts.next() else {
                     return Command::Unknown("play".to_string());
@@ -43,6 +66,14 @@ impl Command {
                 match usize::from_str(raw_index) {
                     Ok(index) => Command::Play(index),
                     Err(_) => Command::Unknown("play".to_string()),
+                }
+            }
+            "playname" => {
+                let query = parts.collect::<Vec<_>>().join(" ");
+                if query.is_empty() {
+                    Command::Unknown("playname".to_string())
+                } else {
+                    Command::PlayName(query)
                 }
             }
             "next" => Command::Next,
@@ -95,6 +126,7 @@ impl Command {
                 }
             }
             "status" => Command::Status,
+            "snapshot" => Command::Snapshot,
             "reload" => Command::Reload,
             "help" => Command::Help,
             "exit" => Command::Exit,

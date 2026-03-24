@@ -760,15 +760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "replaycore-player"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lofty",
- "rodio",
-]
-
-[[package]]
 name = "rodio"
 version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -789,6 +780,15 @@ name = "rtrb"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7204ed6420f698836b76d4d5c2ec5dec7585fd5c3a788fd1cde855d1de598239"
+
+[[package]]
+name = "rust-player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lofty",
+ "rodio",
+]
 
 [[package]]
 name = "rustversion"

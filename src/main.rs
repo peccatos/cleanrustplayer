@@ -1,10 +1,12 @@
 mod app;
 mod command;
-mod music;
 mod player;
+mod music;
+mod queue;
+mod snapshot;
 
-use crate::app::App;
 use anyhow::Result;
+use crate::app::App;
 
 fn main() -> Result<()> {
     let mut app = App::bootstrap()?;
