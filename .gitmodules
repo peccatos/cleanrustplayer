@@ -1,0 +1,3 @@
+[submodule "front-rustplayer"]
+	path = front-rustplayer
+	url = https://github.com/peccatos/clean-front-player-ts-html-css-.git
