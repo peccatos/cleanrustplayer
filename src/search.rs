@@ -20,6 +20,7 @@ impl SearchReport {
     }
 }
 
+#[derive(Clone)]
 pub struct SearchService {
     registry: ProviderRegistry,
 }

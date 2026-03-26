@@ -169,16 +169,24 @@ fn scan_recursive(dir: &Path, out: &mut Vec<Track>) -> Result<()> {
     Ok(())
 }
 
-fn default_music_dir() -> PathBuf {
+pub fn default_music_dir() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .map(|home| home.join("Music"))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MUSIC_DIR))
 }
 
+pub fn load_music_library(dir: &Path) -> Result<Vec<Track>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    scan_music_dir(dir)
+}
+
 pub fn load_default_library() -> Result<Vec<Track>> {
     let dir = default_music_dir();
-    scan_music_dir(&dir)
+    load_music_library(&dir)
 }
 
 pub fn resolve_initial_track(arg: Option<String>, tracks: &[Track]) -> Result<Track> {

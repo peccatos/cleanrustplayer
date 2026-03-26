@@ -1,103 +1,108 @@
-use std::env;
+use std::convert::TryFrom;
 use std::io::{self, Write};
 
 use anyhow::Result;
 
 use crate::command::{Command, RepeatModeArg};
-use crate::music::library::{
-    format_duration, load_default_library, print_tracks, resolve_initial_track, Track,
-};
+use crate::context::AppContext;
+use crate::contract::{PlaybackState, PlaybackStatus, ReplayCoreContract};
+use crate::music::library::{format_duration, resolve_initial_track, Track};
 use crate::player::AudioPlayer;
-use crate::provider::bandcamp::BandcampProvider;
-use crate::provider::registry::ProviderRegistry;
-use crate::provider::{ProviderHttpConfig, ProviderKind, SearchQuery};
+use crate::provider::ProviderKind;
 use crate::queue::PlaybackQueue;
-use crate::search::SearchService;
-use crate::snapshot::{AppSnapshot, NowPlayingView, QueueEntryView};
+use crate::service::{contract_repeat_mode, ContractRuntime, ReplayCoreService};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RepeatMode {
+pub(crate) enum RepeatMode {
     Off,
     One,
     All,
 }
 
 pub struct App {
-    player: AudioPlayer,
-    tracks: Vec<Track>,
+    context: AppContext,
+    player: Option<AudioPlayer>,
     current_index: Option<usize>,
     repeat_mode: RepeatMode,
     queue: PlaybackQueue,
-    search_service: SearchService,
+    contract_service: ReplayCoreService,
+    volume: f32,
 }
 
 impl App {
-    pub fn bootstrap() -> Result<Self> {
-        let mut args = env::args().skip(1);
+    pub fn bootstrap(initial_source: Option<String>) -> Result<Self> {
+        let context = AppContext::bootstrap()?;
+        let contract_service = ReplayCoreService::new()?;
+        let current_index = None;
+        let queue = PlaybackQueue::new(context.tracks.len(), current_index, false);
 
-        let tracks = load_default_library()?;
-        let initial_track = resolve_initial_track(args.next(), &tracks)?;
-        let current_index = tracks.iter().position(|t| t.path == initial_track.path);
-
-        let mut player = AudioPlayer::new()?;
-        player.load_and_play(&initial_track.path)?;
-
-        let queue = PlaybackQueue::new(tracks.len(), current_index, false);
-
-        let mut registry = ProviderRegistry::new();
-        registry.register(BandcampProvider::new(ProviderHttpConfig::default())?);
-        let search_service = SearchService::new(registry);
-
-        println!("Loaded: {}", initial_track.display_label());
-        println!("Path: {}", initial_track.path.display());
-        println!("Duration: {}", initial_track.duration_label());
-
-        Ok(Self {
-            player,
-            tracks,
+        let mut app = Self {
+            context,
+            player: None,
             current_index,
             repeat_mode: RepeatMode::Off,
             queue,
-            search_service,
-        })
+            contract_service,
+            volume: 1.0,
+        };
+
+        if let Some(source) = initial_source {
+            app.open_source(&source)?;
+        }
+
+        Ok(app)
     }
 
     pub fn run(&mut self) -> Result<()> {
+        self.print_banner();
         self.print_help();
         let stdin = io::stdin();
 
         loop {
             self.autonext_if_needed()?;
-            print!("> ");
+            print!("{}> ", self.prompt_label());
             io::stdout().flush()?;
 
             let mut line = String::new();
-            stdin.read_line(&mut line)?;
+            let bytes_read = stdin.read_line(&mut line)?;
+            if bytes_read == 0 {
+                println!();
+                break;
+            }
+
             let input = line.trim();
             if input.is_empty() {
                 continue;
             }
 
-            if !self.handle_command(input)? {
-                break;
+            match self.execute_command(input) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(err) => eprintln!("error: {err}"),
             }
         }
 
         Ok(())
     }
 
-    fn handle_command(&mut self, input: &str) -> Result<bool> {
-        match Command::parse(input) {
-            Command::List => print_tracks(&self.tracks),
+    pub fn execute_command(&mut self, input: &str) -> Result<bool> {
+        self.execute_parsed_command(Command::parse(input))
+    }
+
+    pub fn execute_parsed_command(&mut self, command: Command) -> Result<bool> {
+        match command {
+            Command::List => crate::music::library::print_tracks(&self.context.tracks),
             Command::Queue => self.print_queue(),
             Command::Find(query) => self.print_find_results(&query),
             Command::QueueFind(query) => self.print_queue_find_results(&query),
             Command::Search(query) => self.print_provider_search_results(&query),
             Command::Resolve(url) => self.print_resolved_media(&url),
+            Command::Open(source) => self.open_source(&source)?,
             Command::PlayUrl(url) => self.play_url(&url)?,
+            Command::Contract => self.print_contract()?,
 
             Command::Play(index) => {
-                let Some(track) = self.tracks.get(index).cloned() else {
+                let Some(track) = self.context.tracks.get(index).cloned() else {
                     println!("track index out of range");
                     return Ok(true);
                 };
@@ -106,7 +111,7 @@ impl App {
 
             Command::PlayName(query) => match self.find_first_track_index(&query) {
                 Some(index) => {
-                    let track = self.tracks[index].clone();
+                    let track = self.context.tracks[index].clone();
                     self.play_track(index, &track)?;
                 }
                 None => println!("no track matched query: {}", query),
@@ -115,30 +120,58 @@ impl App {
             Command::Next => self.next_track()?,
             Command::Prev => self.prev_track()?,
             Command::Pause => {
-                self.player.pause();
-                println!("paused");
+                if let Some(player) = self.player.as_ref() {
+                    player.pause();
+                    println!("paused");
+                } else {
+                    println!("nothing loaded");
+                }
             }
             Command::Resume => {
-                self.player.resume();
-                println!("resumed");
+                if let Some(player) = self.player.as_ref() {
+                    player.resume();
+                    println!("resumed");
+                } else {
+                    println!("nothing loaded");
+                }
             }
             Command::Stop => {
-                self.player.stop();
-                println!("stopped");
+                if let Some(player) = self.player.as_mut() {
+                    player.stop();
+                    println!("stopped");
+                } else {
+                    println!("nothing loaded");
+                }
             }
             Command::Volume(volume) => {
                 if !(0.0..=1.0).contains(&volume) {
                     println!("volume must be 0..1");
                     return Ok(true);
                 }
-                self.player.set_volume(volume);
-                println!("volume: {}", self.player.volume());
+                self.volume = volume;
+                if let Some(player) = self.player.as_mut() {
+                    player.set_volume(volume);
+                }
+                println!("volume: {}", self.volume);
             }
-            Command::Seek(seconds) => match self.player.seek_to(seconds) {
-                Ok(()) => println!("seeked to {}s", seconds),
-                Err(err) => println!("seek error: {}", err),
-            },
-            Command::Pos => println!("position: {:.2}s", self.player.position().as_secs_f32()),
+            Command::Seek(seconds) => {
+                if let Some(player) = self.player.as_mut() {
+                    match player.seek_to(seconds) {
+                        Ok(()) => println!("seeked to {}s", seconds),
+                        Err(err) => println!("seek error: {}", err),
+                    }
+                } else {
+                    println!("nothing loaded");
+                }
+            }
+            Command::Pos => {
+                let position = self
+                    .player
+                    .as_ref()
+                    .map(|player| player.position().as_secs_f32())
+                    .unwrap_or(0.0);
+                println!("position: {:.2}s", position);
+            }
             Command::Repeat(mode) => {
                 self.repeat_mode = match mode {
                     RepeatModeArg::Off => RepeatMode::Off,
@@ -149,7 +182,7 @@ impl App {
             }
             Command::Shuffle(enabled) => {
                 self.queue
-                    .set_shuffle(enabled, self.tracks.len(), self.current_index);
+                    .set_shuffle(enabled, self.context.tracks.len(), self.current_index);
                 println!(
                     "shuffle: {}",
                     if self.queue.is_shuffle_enabled() {
@@ -164,7 +197,9 @@ impl App {
             Command::Reload => self.reload_library()?,
             Command::Help => self.print_help(),
             Command::Exit => {
-                self.player.stop();
+                if let Some(player) = self.player.as_mut() {
+                    player.stop();
+                }
                 return Ok(false);
             }
             Command::Unknown(cmd) => println!("unknown or invalid command: {}", cmd),
@@ -174,7 +209,10 @@ impl App {
     }
 
     fn print_provider_search_results(&self, query: &str) {
-        let report = self.search_service.search(SearchQuery::new(query, 10));
+        let report = self
+            .context
+            .search_service
+            .search(crate::provider::SearchQuery::new(query, 10));
 
         if report.query.is_empty() {
             println!("empty query");
@@ -212,7 +250,12 @@ impl App {
             return;
         }
 
-        let Some(provider) = self.search_service.registry().find(ProviderKind::Bandcamp) else {
+        let Some(provider) = self
+            .context
+            .search_service
+            .registry()
+            .find(ProviderKind::Bandcamp)
+        else {
             println!("bandcamp provider is not registered");
             return;
         };
@@ -240,6 +283,53 @@ impl App {
         }
     }
 
+    fn ensure_player(&mut self) -> Result<&mut AudioPlayer> {
+        if self.player.is_none() {
+            let mut player = AudioPlayer::new()?;
+            player.set_volume(self.volume);
+            self.player = Some(player);
+        }
+
+        Ok(self.player.as_mut().expect("player must exist after init"))
+    }
+
+    fn open_source(&mut self, source: &str) -> Result<()> {
+        let normalized = source.trim();
+        if normalized.is_empty() {
+            println!("empty source");
+            return Ok(());
+        }
+
+        if normalized.starts_with("http://") || normalized.starts_with("https://") {
+            return self.play_url(normalized);
+        }
+
+        self.play_path(normalized)
+    }
+
+    fn play_path(&mut self, path: &str) -> Result<()> {
+        let track = resolve_initial_track(Some(path.to_string()), &self.context.tracks)?;
+        let path = track.path.clone();
+        let current_index = self
+            .context
+            .tracks
+            .iter()
+            .position(|candidate| candidate.path == path);
+
+        let player = self.ensure_player()?;
+        player.load_and_play(&path)?;
+
+        self.current_index = current_index;
+        self.queue
+            .rebuild(self.context.tracks.len(), self.current_index);
+
+        println!("Loaded: {}", track.display_label());
+        println!("Path: {}", track.path.display());
+        println!("Duration: {}", track.duration_label());
+
+        Ok(())
+    }
+
     fn play_url(&mut self, url: &str) -> Result<()> {
         let normalized = url.trim();
         if normalized.is_empty() {
@@ -247,8 +337,10 @@ impl App {
             return Ok(());
         }
 
-        self.player.load_url_and_play(normalized)?;
+        self.ensure_player()?.load_url_and_play(normalized)?;
         self.current_index = None;
+        self.queue
+            .rebuild(self.context.tracks.len(), self.current_index);
 
         println!("Loaded remote stream");
         println!("URL: {}", normalized);
@@ -257,13 +349,18 @@ impl App {
     }
 
     fn reload_library(&mut self) -> Result<()> {
-        self.tracks = load_default_library()?;
-        self.current_index = self
-            .player
-            .current_path()
-            .and_then(|p| self.tracks.iter().position(|t| t.path.as_path() == p));
-        self.queue.rebuild(self.tracks.len(), self.current_index);
-        println!("reloaded: {} tracks", self.tracks.len());
+        self.context.reload_local_library()?;
+        self.current_index = self.player.as_ref().and_then(|player| {
+            player.current_path().and_then(|p| {
+                self.context
+                    .tracks
+                    .iter()
+                    .position(|track| track.path.as_path() == p)
+            })
+        });
+        self.queue
+            .rebuild(self.context.tracks.len(), self.current_index);
+        println!("reloaded: {} tracks", self.context.tracks.len());
         Ok(())
     }
 
@@ -281,7 +378,7 @@ impl App {
         println!("empty: {}", s.now_playing.empty);
         println!("position_sec: {:.2}", s.now_playing.position_sec);
         println!("volume: {}", s.now_playing.volume);
-        println!("repeat: {}", s.repeat_mode);
+        println!("repeat: {}", self.repeat_mode_label());
         println!("shuffle: {}", if s.shuffle_enabled { "on" } else { "off" });
         println!("tracks_scanned: {}", s.tracks_scanned);
     }
@@ -311,7 +408,7 @@ impl App {
 
         let mut found = 0usize;
         println!("Find results:");
-        for (index, track) in self.tracks.iter().enumerate() {
+        for (index, track) in self.context.tracks.iter().enumerate() {
             if self.track_matches_query(track, &q) {
                 println!(
                     "  [{}] {} ({})",
@@ -340,7 +437,7 @@ impl App {
         let mut found = 0usize;
         println!("Queue find results:");
         for (pos, &track_index) in self.queue.entries().iter().enumerate() {
-            let track = &self.tracks[track_index];
+            let track = &self.context.tracks[track_index];
             if self.track_matches_query(track, &q) {
                 let marker = if Some(track_index) == self.current_index {
                     ">"
@@ -372,7 +469,8 @@ impl App {
             return None;
         }
 
-        self.tracks
+        self.context
+            .tracks
             .iter()
             .enumerate()
             .find(|(_, t)| self.track_matches_query(t, &q))
@@ -402,17 +500,24 @@ impl App {
                 .contains(query)
     }
 
-    fn snapshot(&self) -> AppSnapshot {
-        let current = self.current_index.and_then(|i| self.tracks.get(i));
+    fn snapshot(&self) -> crate::snapshot::AppSnapshot {
+        let current = self.current_index.and_then(|i| self.context.tracks.get(i));
 
-        let file_or_url = self
-            .player
-            .current_path()
-            .map(|p| p.display().to_string())
-            .or_else(|| self.player.current_url().map(|u| u.to_string()))
-            .unwrap_or_else(|| "<none>".to_string());
+        let (file_or_url, position_sec, paused, empty) = match self.player.as_ref() {
+            Some(player) => (
+                player
+                    .current_path()
+                    .map(|p| p.display().to_string())
+                    .or_else(|| player.current_url().map(|u| u.to_string()))
+                    .unwrap_or_else(|| "<none>".to_string()),
+                player.position().as_secs_f32(),
+                player.is_paused(),
+                player.is_empty(),
+            ),
+            None => ("<idle>".to_string(), 0.0, false, true),
+        };
 
-        let now_playing = NowPlayingView {
+        let now_playing = crate::snapshot::NowPlayingView {
             library_index: self.current_index,
             label: current
                 .map(|t| t.display_label())
@@ -428,10 +533,10 @@ impl App {
                 .map(format_duration)
                 .unwrap_or_else(|| "--:--".to_string()),
             file_path: file_or_url,
-            position_sec: self.player.position().as_secs_f32(),
-            paused: self.player.is_paused(),
-            empty: self.player.is_empty(),
-            volume: self.player.volume(),
+            position_sec,
+            paused,
+            empty,
+            volume: self.volume,
         };
 
         let queue = self
@@ -440,20 +545,22 @@ impl App {
             .iter()
             .enumerate()
             .filter_map(|(queue_position, &library_index)| {
-                self.tracks.get(library_index).map(|track| QueueEntryView {
-                    queue_position,
-                    library_index,
-                    is_current: Some(library_index) == self.current_index,
-                    label: track.display_label(),
-                    duration_label: track.duration_label(),
+                self.context.tracks.get(library_index).map(|track| {
+                    crate::snapshot::QueueEntryView {
+                        queue_position,
+                        library_index,
+                        is_current: Some(library_index) == self.current_index,
+                        label: track.display_label(),
+                        duration_label: track.duration_label(),
+                    }
                 })
             })
             .collect();
 
-        AppSnapshot {
+        crate::snapshot::AppSnapshot {
             repeat_mode: self.repeat_mode_label().to_string(),
             shuffle_enabled: self.queue.is_shuffle_enabled(),
-            tracks_scanned: self.tracks.len(),
+            tracks_scanned: self.context.tracks.len(),
             queue_len: self.queue.len(),
             queue_position: self.queue.position(),
             now_playing,
@@ -462,7 +569,7 @@ impl App {
     }
 
     fn play_track(&mut self, index: usize, track: &Track) -> Result<()> {
-        self.player.load_and_play(&track.path)?;
+        self.ensure_player()?.load_and_play(&track.path)?;
         self.current_index = Some(index);
         self.queue.set_current_track(index);
 
@@ -479,7 +586,7 @@ impl App {
             return Ok(());
         };
 
-        let track = self.tracks[next].clone();
+        let track = self.context.tracks[next].clone();
         self.play_track(next, &track)
     }
 
@@ -489,7 +596,7 @@ impl App {
             return Ok(());
         };
 
-        let track = self.tracks[prev].clone();
+        let track = self.context.tracks[prev].clone();
         self.play_track(prev, &track)
     }
 
@@ -524,19 +631,25 @@ impl App {
     }
 
     fn autonext_if_needed(&mut self) -> Result<()> {
+        let Some(player) = self.player.as_ref() else {
+            return Ok(());
+        };
+
         if self.current_index.is_none()
-            || self.player.is_paused()
-            || self.player.current_path().is_none()
-            || !self.player.is_empty()
+            || player.is_paused()
+            || player.current_path().is_none()
+            || !player.is_empty()
         {
             return Ok(());
         }
 
         if let Some(next) = self.compute_next_index() {
-            let track = self.tracks[next].clone();
+            let track = self.context.tracks[next].clone();
             self.play_track(next, &track)?;
         } else {
-            self.player.stop();
+            if let Some(player) = self.player.as_mut() {
+                player.stop();
+            }
         }
 
         Ok(())
@@ -550,8 +663,108 @@ impl App {
         }
     }
 
+    fn runtime_contract(&self) -> ContractRuntime {
+        let current = self
+            .current_index
+            .and_then(|i| self.context.catalog.tracks.get(i));
+
+        let (status, position_ms) = match self.player.as_ref() {
+            Some(player) if player.is_empty() => (PlaybackStatus::Stopped, 0_u64),
+            Some(player) if player.is_paused() => {
+                let position_ms = u64::try_from(player.position().as_millis()).unwrap_or(u64::MAX);
+                (PlaybackStatus::Paused, position_ms)
+            }
+            Some(player) => {
+                let position_ms = u64::try_from(player.position().as_millis()).unwrap_or(u64::MAX);
+                (PlaybackStatus::Playing, position_ms)
+            }
+            None => (PlaybackStatus::Stopped, 0_u64),
+        };
+
+        let playback = PlaybackState {
+            status,
+            current_track_id: current.map(|track| track.identity.track_id.clone()),
+            current_location_id: current.and_then(|track| track.preferred_location_id.clone()),
+            position_ms,
+            volume: f64::from(self.volume),
+            muted: false,
+        };
+
+        ContractRuntime {
+            playback,
+            queue_order: self.queue.entries().to_vec(),
+            current_queue_index: self.queue.position(),
+            repeat_mode: contract_repeat_mode(self.repeat_mode),
+            shuffle_enabled: self.queue.is_shuffle_enabled(),
+        }
+    }
+
+    fn contract(&self) -> ReplayCoreContract {
+        self.contract_service
+            .build_contract(&self.context, self.runtime_contract())
+    }
+
+    fn print_contract(&self) -> Result<()> {
+        let contract = self.contract();
+        self.contract_service.validate_contract(&contract)?;
+        println!("{}", serde_json::to_string_pretty(&contract)?);
+        Ok(())
+    }
+
+    fn print_banner(&self) {
+        println!("ReplayCore CLI");
+        println!("  user: {}", self.context.user_id);
+        println!("  local roots: {}", self.context.local_music_roots.len());
+        println!("  tracks: {}", self.context.tracks.len());
+        println!("  catalog sources: {}", self.context.catalog.sources.len());
+        println!("  type `help` to list commands");
+    }
+
+    fn prompt_label(&self) -> String {
+        let status = match self.player.as_ref() {
+            Some(player) if player.is_empty() => "idle",
+            Some(player) if player.is_paused() => "paused",
+            Some(_) => "playing",
+            None => "idle",
+        };
+
+        let track = self
+            .current_index
+            .and_then(|i| self.context.tracks.get(i))
+            .map(|track| track.display_label())
+            .or_else(|| {
+                self.player.as_ref().and_then(|player| {
+                    player
+                        .current_path()
+                        .map(|path| {
+                            path.file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.display().to_string())
+                        })
+                        .or_else(|| player.current_url().map(|url| url.to_string()))
+                })
+            })
+            .unwrap_or_else(|| "no-track".to_string());
+
+        let mut label = format!("replaycore:{status}");
+        if !track.is_empty() {
+            let mut short_track = track;
+            if short_track.len() > 30 {
+                short_track.truncate(27);
+                short_track.push_str("...");
+            }
+            label.push(' ');
+            label.push('[');
+            label.push_str(&short_track);
+            label.push(']');
+        }
+
+        label
+    }
+
     fn print_help(&self) {
         println!("Commands:");
+        println!("  open <path|url>       - open a local file or remote url");
         println!("  list                  - show scanned tracks");
         println!("  queue                 - show playback queue");
         println!("  find <query>          - search local library");
@@ -559,8 +772,9 @@ impl App {
         println!("  search <query>        - search provider layer");
         println!("  resolve <url>         - resolve provider page into preview stream");
         println!("  playurl <url>         - download remote stream and play it");
-        println!("  play <index>          - play track by library index");
+        println!("  play <index|query>    - play track by index or first text match");
         println!("  playname <query>      - play first library match");
+        println!("  contract              - print ReplayCore contract JSON");
         println!("  next                  - play next track in queue");
         println!("  prev                  - play previous track in queue");
         println!("  pause                 - pause playback");

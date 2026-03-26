@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://replaycore.dev/schema/replaycore.schema.json",
+  "title": "ReplayCore Player Contract",
+  "type": "object",
+  "required": ["catalog", "user_library", "playback", "queue", "settings"],
+  "properties": {
+    "catalog": { "$ref": "#/$defs/catalog_index" },
+    "user_library": { "$ref": "#/$defs/user_library" },
+    "playback": { "$ref": "#/$defs/playback_state" },
+    "queue": { "$ref": "#/$defs/queue" },
+    "settings": { "$ref": "#/$defs/settings" }
+  },
+
+  "$defs": {
+    "track_identity": {
+      "type": "object",
+      "required": ["track_id", "source_id", "source_track_id"],
+      "properties": {
+        "track_id": { "type": "string" },
+        "source_id": { "type": "string" },
+        "source_track_id": { "type": "string" },
+        "fingerprint": { "type": ["string", "null"] }
+      }
+    },
+
+    "track_metadata": {
+      "type": "object",
+      "required": ["title", "artist", "album"],
+      "properties": {
+        "title": { "type": "string" },
+        "artist": { "type": "string" },
+        "album": { "type": "string" },
+        "album_artist": { "type": "string" },
+        "genre": { "type": "string" },
+        "track_number": { "type": ["integer", "null"] },
+        "disc_number": { "type": ["integer", "null"] },
+        "year": { "type": ["integer", "null"] },
+        "duration_ms": { "type": ["integer", "null"] }
+      }
+    },
+
+    "track": {
+      "type": "object",
+      "required": ["identity", "metadata", "ownership_scope", "availability"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/track_identity" },
+        "metadata": { "$ref": "#/$defs/track_metadata" },
+        "ownership_scope": {
+          "type": "string",
+          "enum": ["user_owned", "shared", "external_catalog"]
+        },
+        "availability": {
+          "type": "string",
+          "enum": ["available", "unavailable", "restricted", "pending_sync"]
+        },
+        "preferred_location_id": { "type": ["string", "null"] }
+      }
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["id", "kind", "enabled"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "local_disk",
+            "streaming_service",
+            "cloud_storage",
+            "shared_library",
+            "remote_catalog"
+          ]
+        },
+        "name": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "priority": { "type": "integer" },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "scan": { "type": "boolean" },
+            "stream": { "type": "boolean" },
+            "download": { "type": "boolean" },
+            "sync": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "track_location": {
+      "type": "object",
+      "required": ["id", "track_id", "source_id", "storage_kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "track_id": { "type": "string" },
+        "source_id": { "type": "string" },
+        "storage_kind": {
+          "type": "string",
+          "enum": ["local_file", "remote_stream", "remote_file", "cached_file"]
+        },
+        "path": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "availability": {
+          "type": "string",
+          "enum": ["available", "unavailable", "restricted", "pending_sync"]
+        }
+      }
+    },
+
+    "catalog_index": {
+      "type": "object",
+      "required": ["tracks", "sources", "locations"],
+      "properties": {
+        "tracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/track" }
+        },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "locations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/track_location" }
+        },
+        "catalog_hash": { "type": "string" }
+      }
+    },
+
+    "user_library": {
+      "type": "object",
+      "required": ["user_id"],
+      "properties": {
+        "user_id": { "type": "string" },
+        "saved_track_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "hidden_track_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "playback_state": {
+      "type": "object",
+      "required": ["status", "volume"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["stopped", "playing", "paused", "buffering", "error"]
+        },
+        "current_track_id": { "type": ["string", "null"] },
+        "current_location_id": { "type": ["string", "null"] },
+        "position_ms": { "type": "integer" },
+        "volume": { "type": "number" },
+        "muted": { "type": "boolean" }
+      }
+    },
+
+    "queue": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "track_id"],
+            "properties": {
+              "id": { "type": "string" },
+              "track_id": { "type": "string" }
+            }
+          }
+        },
+        "current_index": { "type": ["integer", "null"] },
+        "shuffle": { "type": "boolean" },
+        "repeat": {
+          "type": "string",
+          "enum": ["off", "one", "all"]
+        }
+      }
+    },
+
+    "settings": {
+      "type": "object",
+      "properties": {
+        "enabled_source_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "local_music_roots": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "volume_step": { "type": "number" },
+        "cache_enabled": { "type": "boolean" }
+      }
+    },
+
+    "command_envelope": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "data": {},
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

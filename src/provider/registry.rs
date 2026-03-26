@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::provider::{MusicProvider, ProviderKind};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn MusicProvider>>,
 }

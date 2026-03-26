@@ -1,0 +1,30 @@
+# ReplayCore Contract
+
+## Что это
+ReplayCore — это федеративная музыкальная платформа.
+
+- НЕ плеер файлов
+- НЕ локальная библиотека
+- А система, объединяющая разные источники музыки
+
+## Ключевая идея
+
+```text
+Track ≠ File
+Track = Identity + Metadata + Availability + Locations
+
+## Локальная база
+
+Для Postgres используйте Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+Потом задайте строку подключения:
+
+```text
+DATABASE_URL=postgres://replaycore:replaycore@127.0.0.1:5432/replaycore
+```
+
+И запускайте приложение как обычно. Миграции применятся автоматически при старте, если БД доступна.
