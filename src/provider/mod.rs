@@ -1,15 +1,19 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
 
 pub mod bandcamp;
 pub mod bandcamp_extract;
 pub mod registry;
+pub mod youtube;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Local,
     Bandcamp,
+    YouTube,
 }
 
 impl fmt::Display for ProviderKind {
@@ -17,11 +21,13 @@ impl fmt::Display for ProviderKind {
         match self {
             ProviderKind::Local => write!(f, "local"),
             ProviderKind::Bandcamp => write!(f, "bandcamp"),
+            ProviderKind::YouTube => write!(f, "youtube"),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MediaKind {
     Track,
     Album,
@@ -61,7 +67,7 @@ impl SearchQuery {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchItem {
     pub provider: ProviderKind,
     pub kind: MediaKind,
@@ -81,7 +87,7 @@ impl SearchItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedMedia {
     pub provider: ProviderKind,
     pub kind: MediaKind,

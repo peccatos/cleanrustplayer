@@ -13,6 +13,7 @@ mod search;
 mod service;
 mod snapshot;
 mod token_vault;
+mod web;
 
 use std::env;
 use std::net::SocketAddr;
@@ -24,6 +25,7 @@ use crate::context::AppContext;
 use anyhow::Result;
 
 fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
     let args: Vec<String> = env::args().skip(1).collect();
 
     match args.first().map(|s| s.as_str()) {
@@ -78,6 +80,7 @@ fn is_read_only_command(command: &str) -> bool {
             | "queuefind"
             | "search"
             | "resolve"
+            | "youtube"
             | "providers"
             | "provider"
     )
@@ -130,9 +133,11 @@ fn print_usage() {
     println!("  rust-player serve");
     println!("  rust-player help");
     println!(
-        "  rust-player <contract|snapshot|status|list|queue|find|queuefind|search|resolve|providers|provider> ..."
+        "  rust-player <contract|snapshot|status|list|queue|find|queuefind|search|resolve|youtube|providers|provider> ..."
     );
     println!("  rust-player <play|playname|playurl|open|next|prev|pause|resume|stop|volume|seek|pos|repeat|shuffle|reload> ...");
+    println!("  rust-player youtube smoke [query]");
+    println!("  rust-player youtube web [query]");
     println!("  rust-player <audio-file-path>");
     println!();
     println!("Top-level single-shot commands exit after running.");

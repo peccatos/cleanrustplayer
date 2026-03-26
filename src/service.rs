@@ -140,11 +140,14 @@ pub fn contract_repeat_mode(repeat_mode: RepeatMode) -> QueueRepeatMode {
     }
 }
 
-pub fn source_records_for_context(bandcamp_enabled: bool) -> Vec<SourceRecord> {
+pub fn source_records_for_context(
+    bandcamp_enabled: bool,
+    youtube_enabled: bool,
+) -> Vec<SourceRecord> {
     vec![
         SourceRecord::local_import(true),
         SourceRecord::bandcamp(bandcamp_enabled),
-        SourceRecord::youtube(false),
+        SourceRecord::youtube(youtube_enabled),
         SourceRecord::spotify(false),
         SourceRecord::apple_music(false),
         SourceRecord::soundcloud(false),

@@ -2426,6 +2426,7 @@ dependencies = [
  "base64",
  "blake3",
  "chrono",
+ "dotenvy",
  "jsonschema",
  "lofty",
  "rand 0.8.5",

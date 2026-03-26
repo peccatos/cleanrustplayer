@@ -13,6 +13,8 @@ pub enum Command {
     QueueFind(String),
     Search(String),
     Resolve(String),
+    YouTubeSmoke(String),
+    YouTubeWeb(String),
     Providers,
     ProviderSet {
         provider_id: String,
@@ -119,6 +121,16 @@ impl Command {
             "queuefind" => Command::QueueFind(rest.join(" ")),
             "search" => Command::Search(rest.join(" ")),
             "resolve" => Command::Resolve(rest.join(" ")),
+            "youtube" => match rest.first().map(|part| part.as_str()) {
+                Some("smoke") => Command::YouTubeSmoke(
+                    rest.iter().skip(1).cloned().collect::<Vec<_>>().join(" "),
+                ),
+                Some("web") => {
+                    Command::YouTubeWeb(rest.iter().skip(1).cloned().collect::<Vec<_>>().join(" "))
+                }
+                None => Command::YouTubeSmoke(String::new()),
+                _ => Command::Unknown(input),
+            },
             "providers" => Command::Providers,
             "provider" => match rest.first().map(|part| part.as_str()) {
                 Some("list") | Some("ls") | Some("status") | None => Command::Providers,
@@ -228,5 +240,19 @@ mod tests {
                 payload: r#"{"enabled":true,"access_token":"abc123"}"#.to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parses_youtube_smoke_command() {
+        let command = Command::parse("youtube smoke lo-fi mix");
+
+        assert_eq!(command, Command::YouTubeSmoke("lo-fi mix".to_string()));
+    }
+
+    #[test]
+    fn parses_youtube_web_command() {
+        let command = Command::parse("youtube web daft punk");
+
+        assert_eq!(command, Command::YouTubeWeb("daft punk".to_string()));
     }
 }

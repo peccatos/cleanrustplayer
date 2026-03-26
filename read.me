@@ -34,6 +34,18 @@ DATABASE_URL=postgres://replaycore:replaycore@127.0.0.1:5432/replaycore
 REPLAYCORE_TOKEN_ENCRYPTION_KEY=base64-encoded-32-byte-key
 ```
 
+Для YouTube-поиска и resolve добавьте API key:
+
+```text
+REPLAYCORE_YOUTUBE_API_KEY=your-youtube-data-api-key
+```
+
+Для live smoke-проверки можно задать дефолтный запрос:
+
+```text
+REPLAYCORE_YOUTUBE_SMOKE_QUERY=lofi hip hop
+```
+
 И запускайте приложение как обычно. Миграции применятся автоматически при старте, если БД доступна.
 
 Полезные команды:
@@ -42,4 +54,11 @@ REPLAYCORE_TOKEN_ENCRYPTION_KEY=base64-encoded-32-byte-key
 rust-player providers
 rust-player provider set spotify '{"enabled":true,"access_token":"...","refresh_token":"..."}'
 rust-player provider clear spotify
+rust-player youtube smoke "daft punk"
+```
+
+Для ручного live smoke-теста можно запустить:
+
+```text
+cargo test live_smoke_search_and_resolve -- --ignored --nocapture
 ```
