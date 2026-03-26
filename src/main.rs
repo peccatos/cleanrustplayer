@@ -6,11 +6,13 @@ mod contract;
 mod music;
 mod player;
 mod provider;
+mod provider_accounts;
 mod queue;
 mod repository;
 mod search;
 mod service;
 mod snapshot;
+mod token_vault;
 
 use std::env;
 use std::net::SocketAddr;
@@ -76,6 +78,8 @@ fn is_read_only_command(command: &str) -> bool {
             | "queuefind"
             | "search"
             | "resolve"
+            | "providers"
+            | "provider"
     )
 }
 
@@ -126,11 +130,11 @@ fn print_usage() {
     println!("  rust-player serve");
     println!("  rust-player help");
     println!(
-        "  rust-player <contract|snapshot|status|list|queue|find|queuefind|search|resolve> ..."
+        "  rust-player <contract|snapshot|status|list|queue|find|queuefind|search|resolve|providers|provider> ..."
     );
     println!("  rust-player <play|playname|playurl|open|next|prev|pause|resume|stop|volume|seek|pos|repeat|shuffle|reload> ...");
     println!("  rust-player <audio-file-path>");
     println!();
-    println!("Top-level read-only commands exit after printing.");
+    println!("Top-level single-shot commands exit after running.");
     println!("Playback commands start or reuse the interactive shell.");
 }

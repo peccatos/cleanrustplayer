@@ -14,9 +14,11 @@ use crate::music::library::{default_music_dir, load_music_library, Track};
 use crate::provider::bandcamp::BandcampProvider;
 use crate::provider::registry::ProviderRegistry;
 use crate::provider::ProviderHttpConfig;
+use crate::provider_accounts::{ProviderAccountSummary, ProviderAccountWrite};
 use crate::repository::{CatalogProjection, ProjectionDefaults, SqlxRepository};
 use crate::search::SearchService;
 use crate::service::source_records_for_context;
+use crate::token_vault::TokenVault;
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -30,6 +32,7 @@ pub struct AppContext {
     pub volume_step: f64,
     pub cache_enabled: bool,
     pub repository: Option<SqlxRepository>,
+    pub token_vault: Option<TokenVault>,
 }
 
 impl AppContext {
@@ -42,6 +45,7 @@ impl AppContext {
             cache_enabled: configured_cache_enabled(),
         };
         let repository = block_on_database(SqlxRepository::connect_from_env())?;
+        let token_vault = TokenVault::from_env()?;
 
         let mut local_music_roots = defaults.local_music_roots.clone();
         let mut volume_step = defaults.volume_step;
@@ -57,6 +61,9 @@ impl AppContext {
         let search_service = SearchService::new(registry.clone());
         let (tracks, catalog) = if let Some(repo) = repository.as_ref() {
             block_on_database(repo.migrate())?;
+            block_on_database(
+                repo.seed_provider_definitions(&source_records_for_context(bandcamp_enabled)),
+            )?;
             let projection = block_on_database(repo.load_projection(&user_id, defaults.clone()))?;
             local_music_roots = projection.local_music_roots.clone();
             volume_step = projection.volume_step;
@@ -107,6 +114,7 @@ impl AppContext {
             volume_step,
             cache_enabled,
             repository,
+            token_vault,
         })
     }
 
@@ -143,6 +151,50 @@ impl AppContext {
         }
 
         Ok(self.tracks.len())
+    }
+
+    pub fn provider_accounts_snapshot(&self) -> Result<Vec<ProviderAccountSummary>> {
+        if let Some(repository) = self.repository.clone() {
+            return block_on_database(repository.load_provider_accounts(&self.user_id));
+        }
+
+        Ok(self
+            .catalog
+            .sources
+            .iter()
+            .map(ProviderAccountSummary::from_source)
+            .collect())
+    }
+
+    pub fn upsert_provider_account(
+        &self,
+        provider_id: &str,
+        input: ProviderAccountWrite,
+    ) -> Result<ProviderAccountSummary> {
+        let repository = self
+            .repository
+            .clone()
+            .context("database is not configured")?;
+        let token_vault = self
+            .token_vault
+            .as_ref()
+            .context("token encryption key is not configured")?;
+
+        block_on_database(repository.upsert_provider_account(
+            &self.user_id,
+            provider_id,
+            &input,
+            token_vault,
+        ))
+    }
+
+    pub fn clear_provider_account(&self, provider_id: &str) -> Result<ProviderAccountSummary> {
+        let repository = self
+            .repository
+            .clone()
+            .context("database is not configured")?;
+
+        block_on_database(repository.clear_provider_account(&self.user_id, provider_id))
     }
 }
 

@@ -12,6 +12,7 @@ ReplayCore — это федеративная музыкальная платф
 ```text
 Track ≠ File
 Track = Identity + Metadata + Availability + Locations
+```
 
 ## Локальная база
 
@@ -27,4 +28,18 @@ docker compose up -d
 DATABASE_URL=postgres://replaycore:replaycore@127.0.0.1:5432/replaycore
 ```
 
+Для OAuth/token storage добавьте ключ шифрования:
+
+```text
+REPLAYCORE_TOKEN_ENCRYPTION_KEY=base64-encoded-32-byte-key
+```
+
 И запускайте приложение как обычно. Миграции применятся автоматически при старте, если БД доступна.
+
+Полезные команды:
+
+```text
+rust-player providers
+rust-player provider set spotify '{"enabled":true,"access_token":"...","refresh_token":"..."}'
+rust-player provider clear spotify
+```

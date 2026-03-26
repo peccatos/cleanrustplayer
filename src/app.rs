@@ -9,6 +9,7 @@ use crate::contract::{PlaybackState, PlaybackStatus, ReplayCoreContract};
 use crate::music::library::{format_duration, resolve_initial_track, Track};
 use crate::player::AudioPlayer;
 use crate::provider::ProviderKind;
+use crate::provider_accounts::{ProviderAccountSummary, ProviderAccountWrite};
 use crate::queue::PlaybackQueue;
 use crate::service::{contract_repeat_mode, ContractRuntime, ReplayCoreService};
 
@@ -97,6 +98,12 @@ impl App {
             Command::QueueFind(query) => self.print_queue_find_results(&query),
             Command::Search(query) => self.print_provider_search_results(&query),
             Command::Resolve(url) => self.print_resolved_media(&url),
+            Command::Providers => self.print_provider_accounts(),
+            Command::ProviderSet {
+                provider_id,
+                payload,
+            } => self.set_provider_account(&provider_id, &payload)?,
+            Command::ProviderClear(provider_id) => self.clear_provider_account(&provider_id)?,
             Command::Open(source) => self.open_source(&source)?,
             Command::PlayUrl(url) => self.play_url(&url)?,
             Command::Contract => self.print_contract()?,
@@ -243,6 +250,41 @@ impl App {
         }
     }
 
+    fn print_provider_accounts(&self) {
+        match self.context.provider_accounts_snapshot() {
+            Ok(accounts) => {
+                if accounts.is_empty() {
+                    println!("no providers");
+                    return;
+                }
+
+                println!("Providers:");
+                for account in accounts {
+                    self.print_provider_account(&account);
+                }
+            }
+            Err(err) => println!("provider load error: {}", err),
+        }
+    }
+
+    fn set_provider_account(&self, provider_id: &str, payload: &str) -> Result<()> {
+        let input: ProviderAccountWrite = serde_json::from_str(payload)
+            .map_err(|err| anyhow::anyhow!("invalid provider account payload: {err}"))?;
+        let summary = self.context.upsert_provider_account(provider_id, input)?;
+
+        println!("updated provider account: {}", summary.provider_id);
+        self.print_provider_account(&summary);
+        Ok(())
+    }
+
+    fn clear_provider_account(&self, provider_id: &str) -> Result<()> {
+        let summary = self.context.clear_provider_account(provider_id)?;
+
+        println!("cleared provider account: {}", summary.provider_id);
+        self.print_provider_account(&summary);
+        Ok(())
+    }
+
     fn print_resolved_media(&self, url: &str) {
         let normalized = url.trim();
         if normalized.is_empty() {
@@ -281,6 +323,58 @@ impl App {
                 println!("resolve error: {}", err);
             }
         }
+    }
+
+    fn print_provider_account(&self, account: &ProviderAccountSummary) {
+        println!("  [{}] {}", account.provider_id, account.provider_name);
+        println!("      kind: {}", account.provider_kind);
+        println!(
+            "      enabled: {}",
+            if account.enabled { "yes" } else { "no" }
+        );
+        println!("      status: {}", account.status);
+        println!(
+            "      connected: {}",
+            if account.has_access_token {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        println!(
+            "      refresh_token: {}",
+            if account.has_refresh_token {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        println!(
+            "      priority: {}",
+            account
+                .priority
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        );
+        println!(
+            "      expires: {}",
+            account
+                .token_expires_at
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_else(|| "<none>".to_string())
+        );
+        println!(
+            "      scopes: {}",
+            if account.scopes.is_empty() {
+                "<none>".to_string()
+            } else {
+                account.scopes.join(", ")
+            }
+        );
+        println!(
+            "      capabilities: scan={} stream={} download={} sync={}",
+            account.scan, account.stream, account.download, account.sync
+        );
     }
 
     fn ensure_player(&mut self) -> Result<&mut AudioPlayer> {

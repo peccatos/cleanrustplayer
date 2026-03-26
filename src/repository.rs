@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
@@ -16,6 +17,8 @@ use crate::contract::{
     TrackMetadata, TrackRecord,
 };
 use crate::music::library::Track;
+use crate::provider_accounts::{ProviderAccountSummary, ProviderAccountWrite};
+use crate::token_vault::TokenVault;
 
 #[derive(Debug, Clone)]
 pub struct ProjectionDefaults {
@@ -101,6 +104,37 @@ struct UserLibraryItemRow {
     item_kind: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ProviderAccountSummaryRow {
+    provider_id: String,
+    provider_kind: String,
+    provider_name: String,
+    enabled: bool,
+    priority: Option<i32>,
+    external_account_id: Option<String>,
+    scopes: Json<Vec<String>>,
+    has_access_token: bool,
+    has_refresh_token: bool,
+    token_expires_at: Option<DateTime<Utc>>,
+    status: String,
+    settings: Json<Value>,
+    scan: bool,
+    stream: bool,
+    download: bool,
+    sync: bool,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ProviderAccountSecretRow {
+    provider_id: String,
+    external_account_id: Option<String>,
+    scopes: Json<Vec<String>>,
+    access_token_encrypted: Option<String>,
+    refresh_token_encrypted: Option<String>,
+    token_expires_at: Option<DateTime<Utc>>,
+    settings: Json<Value>,
+}
+
 impl SqlxRepository {
     pub async fn connect_from_env() -> Result<Option<Self>> {
         let url = match env::var("REPLAYCORE_DATABASE_URL").or_else(|_| env::var("DATABASE_URL")) {
@@ -128,6 +162,348 @@ impl SqlxRepository {
             .await
             .context("failed to run SQLx migrations")?;
         Ok(())
+    }
+
+    pub async fn seed_provider_definitions(&self, sources: &[SourceRecord]) -> Result<()> {
+        for source in sources {
+            let capabilities = source
+                .capabilities
+                .clone()
+                .unwrap_or_else(|| SourceCapabilities::new(false, false, false, false));
+
+            sqlx::query(
+                r#"
+                INSERT INTO providers (id, kind, name, scan, stream, download, sync)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (id) DO UPDATE
+                SET kind = EXCLUDED.kind,
+                    name = EXCLUDED.name,
+                    scan = EXCLUDED.scan,
+                    stream = EXCLUDED.stream,
+                    download = EXCLUDED.download,
+                    sync = EXCLUDED.sync,
+                    updated_at = NOW()
+                "#,
+            )
+            .bind(&source.id)
+            .bind(enum_to_string(source.kind)?)
+            .bind(source.name.clone().unwrap_or_else(|| source.id.clone()))
+            .bind(capabilities.scan)
+            .bind(capabilities.stream)
+            .bind(capabilities.download)
+            .bind(capabilities.sync)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("failed to seed provider {}", source.id))?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn load_provider_accounts(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<ProviderAccountSummary>> {
+        let rows: Vec<ProviderAccountSummaryRow> = sqlx::query_as(
+            r#"
+            SELECT
+                p.id AS provider_id,
+                p.kind AS provider_kind,
+                p.name AS provider_name,
+                COALESCE(a.enabled, FALSE) AS enabled,
+                a.priority,
+                a.external_account_id,
+                COALESCE(a.scopes, '[]'::jsonb) AS scopes,
+                a.access_token_encrypted IS NOT NULL AS has_access_token,
+                a.refresh_token_encrypted IS NOT NULL AS has_refresh_token,
+                a.token_expires_at,
+                COALESCE(a.status, CASE WHEN COALESCE(a.enabled, FALSE) THEN 'active' ELSE 'disabled' END) AS status,
+                COALESCE(a.settings, '{}'::jsonb) AS settings,
+                p.scan,
+                p.stream,
+                p.download,
+                p.sync
+            FROM providers p
+            LEFT JOIN provider_accounts a
+                ON a.provider_id = p.id
+               AND a.user_id = $1
+            ORDER BY COALESCE(a.priority, 2147483647), p.id
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to load provider accounts")?;
+
+        Ok(rows
+            .into_iter()
+            .map(provider_account_summary_from_row)
+            .collect())
+    }
+
+    pub async fn upsert_provider_account(
+        &self,
+        user_id: &str,
+        provider_id: &str,
+        input: &ProviderAccountWrite,
+        token_vault: &TokenVault,
+    ) -> Result<ProviderAccountSummary> {
+        let provider_exists: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT id
+            FROM providers
+            WHERE id = $1
+            "#,
+        )
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to check provider existence")?;
+
+        if provider_exists.is_none() {
+            anyhow::bail!("unknown provider: {provider_id}");
+        }
+
+        let access_token_encrypted = match input.access_token.as_ref() {
+            Some(access_token) => Some(
+                token_vault
+                    .encrypt(access_token)
+                    .context("failed to encrypt access token")?,
+            ),
+            None => None,
+        };
+        let refresh_token_encrypted = match input.refresh_token.as_ref() {
+            Some(refresh_token) => Some(
+                token_vault
+                    .encrypt(refresh_token)
+                    .context("failed to encrypt refresh token")?,
+            ),
+            None => None,
+        };
+        let scopes = Json(input.scopes.clone());
+        let status = input.status.clone().unwrap_or_else(|| {
+            if input.enabled {
+                "active".to_string()
+            } else {
+                "disabled".to_string()
+            }
+        });
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to open provider account transaction")?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO provider_accounts (
+                user_id,
+                provider_id,
+                enabled,
+                priority,
+                external_account_id,
+                scopes,
+                access_token_encrypted,
+                refresh_token_encrypted,
+                token_expires_at,
+                status,
+                settings
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                NULL,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                '{}'::jsonb
+            )
+            ON CONFLICT (user_id, provider_id) DO UPDATE
+            SET enabled = EXCLUDED.enabled,
+                external_account_id = EXCLUDED.external_account_id,
+                scopes = EXCLUDED.scopes,
+                access_token_encrypted = EXCLUDED.access_token_encrypted,
+                refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+                token_expires_at = EXCLUDED.token_expires_at,
+                status = EXCLUDED.status,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(user_id)
+        .bind(provider_id)
+        .bind(input.enabled)
+        .bind(&input.external_account_id)
+        .bind(scopes)
+        .bind(access_token_encrypted)
+        .bind(refresh_token_encrypted)
+        .bind(input.token_expires_at)
+        .bind(status)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("failed to upsert provider account {provider_id}"))?;
+
+        tx.commit()
+            .await
+            .context("failed to commit provider account transaction")?;
+
+        self.load_provider_accounts(user_id)
+            .await
+            .and_then(|accounts| {
+                accounts
+                    .into_iter()
+                    .find(|account| account.provider_id == provider_id)
+                    .ok_or_else(|| anyhow::anyhow!("failed to load provider account {provider_id}"))
+            })
+    }
+
+    pub async fn clear_provider_account(
+        &self,
+        user_id: &str,
+        provider_id: &str,
+    ) -> Result<ProviderAccountSummary> {
+        let provider_exists: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT id
+            FROM providers
+            WHERE id = $1
+            "#,
+        )
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to check provider existence")?;
+
+        if provider_exists.is_none() {
+            anyhow::bail!("unknown provider: {provider_id}");
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("failed to open provider account transaction")?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO provider_accounts (
+                user_id,
+                provider_id,
+                enabled,
+                priority,
+                external_account_id,
+                scopes,
+                access_token_encrypted,
+                refresh_token_encrypted,
+                token_expires_at,
+                status,
+                settings
+            )
+            VALUES (
+                $1,
+                $2,
+                FALSE,
+                NULL,
+                NULL,
+                '[]'::jsonb,
+                NULL,
+                NULL,
+                NULL,
+                'disabled',
+                '{}'::jsonb
+            )
+            ON CONFLICT (user_id, provider_id) DO UPDATE
+            SET enabled = FALSE,
+                external_account_id = NULL,
+                scopes = '[]'::jsonb,
+                access_token_encrypted = NULL,
+                refresh_token_encrypted = NULL,
+                token_expires_at = NULL,
+                status = 'disabled',
+                updated_at = NOW()
+            "#,
+        )
+        .bind(user_id)
+        .bind(provider_id)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("failed to clear provider account {provider_id}"))?;
+
+        tx.commit()
+            .await
+            .context("failed to commit provider account transaction")?;
+
+        self.load_provider_accounts(user_id)
+            .await
+            .and_then(|accounts| {
+                accounts
+                    .into_iter()
+                    .find(|account| account.provider_id == provider_id)
+                    .ok_or_else(|| anyhow::anyhow!("failed to load provider account {provider_id}"))
+            })
+    }
+
+    pub async fn load_provider_account_secrets(
+        &self,
+        user_id: &str,
+        provider_id: &str,
+        token_vault: &TokenVault,
+    ) -> Result<Option<crate::provider_accounts::ProviderAccountSecrets>> {
+        let row: Option<ProviderAccountSecretRow> = sqlx::query_as(
+            r#"
+            SELECT
+                provider_id,
+                external_account_id,
+                COALESCE(scopes, '[]'::jsonb) AS scopes,
+                access_token_encrypted,
+                refresh_token_encrypted,
+                token_expires_at,
+                COALESCE(settings, '{}'::jsonb) AS settings
+            FROM provider_accounts
+            WHERE user_id = $1
+              AND provider_id = $2
+            "#,
+        )
+        .bind(user_id)
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("failed to load provider account secrets")?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let access_token = match row.access_token_encrypted {
+            Some(ref token) => Some(
+                token_vault
+                    .decrypt(token)
+                    .context("failed to decrypt access token")?,
+            ),
+            None => None,
+        };
+        let refresh_token = match row.refresh_token_encrypted {
+            Some(ref token) => Some(
+                token_vault
+                    .decrypt(token)
+                    .context("failed to decrypt refresh token")?,
+            ),
+            None => None,
+        };
+
+        Ok(Some(crate::provider_accounts::ProviderAccountSecrets::new(
+            row.provider_id,
+            row.external_account_id,
+            row.scopes.0,
+            access_token,
+            refresh_token,
+            row.token_expires_at,
+            row.settings.0,
+        )))
     }
 
     pub async fn load_projection(
@@ -442,7 +818,9 @@ impl SqlxRepository {
             .execute(&mut *tx)
             .await
             .with_context(|| format!("failed to persist provider {}", source.id))?;
+        }
 
+        for source in &projection.catalog.sources {
             let enabled = source.id == "local_import" || source.enabled;
             let status = if enabled { "active" } else { "disabled" };
             let priority = source.priority.and_then(|value| i32::try_from(value).ok());
@@ -780,6 +1158,27 @@ fn build_local_track(row: &CatalogTrackRow, path: PathBuf) -> Track {
         artist: row.artist.clone(),
         album: row.album.clone(),
         duration,
+    }
+}
+
+fn provider_account_summary_from_row(row: ProviderAccountSummaryRow) -> ProviderAccountSummary {
+    ProviderAccountSummary {
+        provider_id: row.provider_id,
+        provider_kind: row.provider_kind,
+        provider_name: row.provider_name,
+        enabled: row.enabled,
+        priority: row.priority.map(i64::from),
+        external_account_id: row.external_account_id,
+        scopes: row.scopes.0,
+        has_access_token: row.has_access_token,
+        has_refresh_token: row.has_refresh_token,
+        token_expires_at: row.token_expires_at,
+        status: row.status,
+        settings: row.settings.0,
+        scan: row.scan,
+        stream: row.stream,
+        download: row.download,
+        sync: row.sync,
     }
 }
 

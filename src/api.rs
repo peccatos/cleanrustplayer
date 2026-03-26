@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::context::AppContext;
 use crate::contract::{CommandEnvelope, ReplayCoreContract};
+use crate::provider_accounts::{ProviderAccountSummary, ProviderAccountWrite};
 use crate::service::ReplayCoreService;
 
 #[derive(Clone)]
@@ -45,6 +46,11 @@ async fn serve(context: AppContext, addr: SocketAddr) -> Result<()> {
         .route("/health", get(health_handler))
         .route("/v1/contract", get(contract_handler))
         .route("/v1/library/refresh", post(refresh_handler))
+        .route("/v1/providers", get(providers_handler))
+        .route(
+            "/v1/provider-accounts/:provider_id",
+            post(provider_account_upsert_handler).delete(provider_account_clear_handler),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -106,6 +112,83 @@ async fn refresh_handler(
             enabled_source_ids,
         }
     };
+
+    Ok(Json(CommandEnvelope::ok(summary)))
+}
+
+async fn providers_handler(
+    State(state): State<ApiState>,
+) -> Result<Json<CommandEnvelope<Vec<ProviderAccountSummary>>>, (StatusCode, String)> {
+    let (context_snapshot, repository) = {
+        let context = state.context.lock().await;
+        (context.clone(), context.repository.clone())
+    };
+
+    let providers = if let Some(repository) = repository {
+        repository
+            .load_provider_accounts(&context_snapshot.user_id)
+            .await
+            .map_err(internal_error)?
+    } else {
+        context_snapshot
+            .catalog
+            .sources
+            .iter()
+            .map(ProviderAccountSummary::from_source)
+            .collect()
+    };
+
+    Ok(Json(CommandEnvelope::ok(providers)))
+}
+
+async fn provider_account_upsert_handler(
+    axum::extract::Path(provider_id): axum::extract::Path<String>,
+    State(state): State<ApiState>,
+    Json(input): Json<ProviderAccountWrite>,
+) -> Result<Json<CommandEnvelope<ProviderAccountSummary>>, (StatusCode, String)> {
+    let (context_snapshot, repository, token_vault) = {
+        let context = state.context.lock().await;
+        (
+            context.clone(),
+            context.repository.clone(),
+            context.token_vault.clone(),
+        )
+    };
+
+    let repository = repository
+        .ok_or_else(|| internal_error("database is not configured for provider account writes"))?;
+    let token_vault =
+        token_vault.ok_or_else(|| internal_error("token encryption key is not configured"))?;
+
+    let summary = repository
+        .upsert_provider_account(
+            &context_snapshot.user_id,
+            &provider_id,
+            &input,
+            &token_vault,
+        )
+        .await
+        .map_err(internal_error)?;
+
+    Ok(Json(CommandEnvelope::ok(summary)))
+}
+
+async fn provider_account_clear_handler(
+    axum::extract::Path(provider_id): axum::extract::Path<String>,
+    State(state): State<ApiState>,
+) -> Result<Json<CommandEnvelope<ProviderAccountSummary>>, (StatusCode, String)> {
+    let (context_snapshot, repository) = {
+        let context = state.context.lock().await;
+        (context.clone(), context.repository.clone())
+    };
+
+    let repository = repository
+        .ok_or_else(|| internal_error("database is not configured for provider account writes"))?;
+
+    let summary = repository
+        .clear_provider_account(&context_snapshot.user_id, &provider_id)
+        .await
+        .map_err(internal_error)?;
 
     Ok(Json(CommandEnvelope::ok(summary)))
 }
