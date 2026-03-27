@@ -1,21 +1,15 @@
+// Interactive shell for local playback and admin commands.
 use std::convert::TryFrom;
-use std::env;
 use std::io::{self, Write};
-use std::net::{SocketAddr, TcpStream};
-use std::process::Command as ProcessCommand;
-use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::api::run_server;
 use crate::command::{Command, RepeatModeArg};
 use crate::context::AppContext;
 use crate::contract::{PlaybackState, PlaybackStatus, ReplayCoreContract};
 use crate::music::library::{format_duration, resolve_initial_track, Track};
 use crate::player::AudioPlayer;
-use crate::provider::youtube::youtube_video_id_from_url;
-use crate::provider::{MusicProvider, ProviderKind, SearchQuery};
+use crate::provider::SearchQuery;
 use crate::provider_accounts::{ProviderAccountSummary, ProviderAccountWrite};
 use crate::queue::PlaybackQueue;
 use crate::service::{contract_repeat_mode, ContractRuntime, ReplayCoreService};
@@ -35,7 +29,6 @@ pub struct App {
     queue: PlaybackQueue,
     contract_service: ReplayCoreService,
     volume: f32,
-    web_server_started: bool,
 }
 
 impl App {
@@ -53,7 +46,6 @@ impl App {
             queue,
             contract_service,
             volume: 1.0,
-            web_server_started: false,
         };
 
         if let Some(source) = initial_source {
@@ -107,8 +99,6 @@ impl App {
             Command::QueueFind(query) => self.print_queue_find_results(&query),
             Command::Search(query) => self.print_provider_search_results(&query),
             Command::Resolve(url) => self.print_resolved_media(&url),
-            Command::YouTubeSmoke(query) => self.print_youtube_smoke(&query)?,
-            Command::YouTubeWeb(value) => self.print_youtube_web(&value)?,
             Command::Providers => self.print_provider_accounts(),
             Command::ProviderSet {
                 provider_id,
@@ -116,7 +106,6 @@ impl App {
             } => self.set_provider_account(&provider_id, &payload)?,
             Command::ProviderClear(provider_id) => self.clear_provider_account(&provider_id)?,
             Command::Open(source) => self.open_source(&source)?,
-            Command::PlayUrl(url) => self.play_url(&url)?,
             Command::Contract => self.print_contract()?,
 
             Command::Play(index) => {
@@ -230,7 +219,7 @@ impl App {
         let report = self
             .context
             .search_service
-            .search(crate::provider::SearchQuery::new(query, 10));
+            .search(SearchQuery::new(query, 10));
 
         if report.query.is_empty() {
             println!("empty query");
@@ -302,149 +291,26 @@ impl App {
             println!("empty url");
             return;
         }
-
-        let providers = self.resolve_providers_for_url(normalized);
-        if providers.is_empty() {
-            println!("no resolve-capable provider is registered");
-            return;
-        }
-
-        let mut last_error = None;
-        for provider in providers {
-            match provider.resolve_page(normalized) {
-                Ok(media) => {
-                    println!("Resolved:");
-                    println!("  provider: {}", media.provider);
-                    println!("  kind: {}", media.kind);
-                    println!("  title: {}", media.title);
-                    println!(
-                        "  artist: {}",
-                        media.artist.unwrap_or_else(|| "<none>".to_string())
-                    );
-                    println!("  page_url: {}", media.page_url);
-                    println!("  playable: {}", media.playable);
-                    println!(
-                        "  preview_url: {}",
-                        media.preview_url.unwrap_or_else(|| "<none>".to_string())
-                    );
-                    return;
-                }
-                Err(err) => last_error = Some(err),
+        match self.context.search_service.resolve(normalized) {
+            Ok(media) => {
+                println!("Resolved:");
+                println!("  provider: {}", media.provider);
+                println!("  kind: {}", media.kind);
+                println!("  title: {}", media.title);
+                println!(
+                    "  artist: {}",
+                    media.artist.unwrap_or_else(|| "<none>".to_string())
+                );
+                println!("  page_url: {}", media.page_url);
+                println!("  playable: {}", media.playable);
+                println!(
+                    "  preview_url: {}",
+                    media.preview_url.unwrap_or_else(|| "<none>".to_string())
+                );
             }
-        }
-
-        if let Some(err) = last_error {
-            println!("resolve error: {}", err);
+            Err(err) => println!("resolve error: {}", err),
         }
     }
-
-    fn print_youtube_smoke(&self, query: &str) -> Result<()> {
-        let Some(provider) = self
-            .context
-            .search_service
-            .registry()
-            .find(ProviderKind::YouTube)
-        else {
-            println!("youtube provider is not registered");
-            return Ok(());
-        };
-
-        let effective_query = normalized_smoke_query(query);
-        println!("YouTube smoke query: {}", effective_query);
-
-        let results = provider.search(&SearchQuery::new(effective_query.clone(), 5))?;
-        if results.is_empty() {
-            println!("no youtube search results");
-            return Ok(());
-        }
-
-        println!("Search results:");
-        for (index, item) in results.iter().enumerate() {
-            println!(
-                "  [{}] [{}:{}] {}",
-                index,
-                item.provider,
-                item.kind,
-                item.display_title()
-            );
-            println!("      url: {}", item.url);
-            if let Some(preview_url) = item.preview_url.as_ref() {
-                println!("      preview_url: {}", preview_url);
-            }
-        }
-
-        let Some(candidate) = results
-            .iter()
-            .find(|item| item.playable)
-            .or_else(|| results.first())
-        else {
-            println!("no playable youtube result");
-            return Ok(());
-        };
-
-        println!("Resolving first playable result:");
-        println!("  url: {}", candidate.url);
-
-        let resolved = provider.resolve_page(&candidate.url)?;
-        println!("Resolved:");
-        println!("  provider: {}", resolved.provider);
-        println!("  kind: {}", resolved.kind);
-        println!("  title: {}", resolved.title);
-        println!(
-            "  artist: {}",
-            resolved.artist.unwrap_or_else(|| "<none>".to_string())
-        );
-        println!("  page_url: {}", resolved.page_url);
-        println!("  playable: {}", resolved.playable);
-        println!(
-            "  preview_url: {}",
-            resolved.preview_url.unwrap_or_else(|| "<none>".to_string())
-        );
-
-        Ok(())
-    }
-
-    fn print_youtube_web(&mut self, value: &str) -> Result<()> {
-        self.ensure_youtube_web_server()?;
-
-        let url = youtube_web_url(value);
-        println!("YouTube web player URL:");
-        println!("  {}", url);
-        match open_url_in_browser(&url) {
-            Ok(true) => println!("Opened in browser."),
-            Ok(false) => println!("Could not open browser automatically."),
-            Err(err) => {
-                println!("Could not open browser automatically: {}", err);
-            }
-        }
-        Ok(())
-    }
-
-    fn resolve_providers_for_url(&self, url: &str) -> Vec<Arc<dyn MusicProvider>> {
-        let registry = self.context.search_service.registry();
-        let normalized = url.trim();
-
-        let mut providers = Vec::new();
-
-        if youtube_video_id_from_url(normalized).is_some() {
-            if let Some(provider) = registry.find(ProviderKind::YouTube) {
-                providers.push(provider);
-            }
-        } else if is_bandcamp_url(&normalized.to_ascii_lowercase()) {
-            if let Some(provider) = registry.find(ProviderKind::Bandcamp) {
-                providers.push(provider);
-            }
-        } else {
-            for provider in registry.providers() {
-                if provider.capabilities().resolve {
-                    providers.push(provider.clone());
-                }
-            }
-        }
-
-        providers
-    }
-
     fn print_provider_account(&self, account: &ProviderAccountSummary) {
         println!("  [{}] {}", account.provider_id, account.provider_name);
         println!("      kind: {}", account.provider_kind);
@@ -515,7 +381,8 @@ impl App {
         }
 
         if normalized.starts_with("http://") || normalized.starts_with("https://") {
-            return self.play_url(normalized);
+            println!("HTTP links are handled in the desktop frontend");
+            return Ok(());
         }
 
         self.play_path(normalized)
@@ -540,30 +407,6 @@ impl App {
         println!("Loaded: {}", track.display_label());
         println!("Path: {}", track.path.display());
         println!("Duration: {}", track.duration_label());
-
-        Ok(())
-    }
-
-    fn play_url(&mut self, url: &str) -> Result<()> {
-        let normalized = url.trim();
-        if normalized.is_empty() {
-            println!("empty url");
-            return Ok(());
-        }
-
-        if youtube_video_id_from_url(normalized).is_some() {
-            println!("YouTube URLs are not direct audio streams.");
-            println!("Use `youtube smoke <query>` to resolve metadata, or open the video in a browser/web player.");
-            return Ok(());
-        }
-
-        self.ensure_player()?.load_url_and_play(normalized)?;
-        self.current_index = None;
-        self.queue
-            .rebuild(self.context.tracks.len(), self.current_index);
-
-        println!("Loaded remote stream");
-        println!("URL: {}", normalized);
 
         Ok(())
     }
@@ -728,8 +571,7 @@ impl App {
                 player
                     .current_path()
                     .map(|p| p.display().to_string())
-                    .or_else(|| player.current_url().map(|u| u.to_string()))
-                    .unwrap_or_else(|| "<none>".to_string()),
+                    .unwrap_or_else(|| "<idle>".to_string()),
                 player.position().as_secs_f32(),
                 player.is_paused(),
                 player.is_empty(),
@@ -961,7 +803,6 @@ impl App {
                                 .map(|name| name.to_string_lossy().into_owned())
                                 .unwrap_or_else(|| path.display().to_string())
                         })
-                        .or_else(|| player.current_url().map(|url| url.to_string()))
                 })
             })
             .unwrap_or_else(|| "no-track".to_string());
@@ -984,16 +825,13 @@ impl App {
 
     fn print_help(&self) {
         println!("Commands:");
-        println!("  open <path|url>       - open a local file or remote url");
+        println!("  open <path>           - open a local file");
         println!("  list                  - show scanned tracks");
         println!("  queue                 - show playback queue");
         println!("  find <query>          - search local library");
         println!("  queuefind <query>     - search current queue");
         println!("  search <query>        - search provider layer");
         println!("  resolve <url>         - resolve provider page into preview stream");
-        println!("  youtube smoke [query] - run live YouTube search + resolve smoke test");
-        println!("  youtube web [query]   - print the local YouTube web player URL");
-        println!("  playurl <url>         - download remote stream and play it");
         println!("  play <index|query>    - play track by index or first text match");
         println!("  playname <query>      - play first library match");
         println!("  contract              - print ReplayCore contract JSON");
@@ -1017,114 +855,4 @@ impl App {
 
 fn normalize_query(query: &str) -> String {
     query.trim().to_lowercase()
-}
-
-fn is_bandcamp_url(url: &str) -> bool {
-    url.contains("bandcamp.com")
-}
-
-fn normalized_smoke_query(query: &str) -> String {
-    let normalized = query.trim();
-    if normalized.is_empty() {
-        std::env::var("REPLAYCORE_YOUTUBE_SMOKE_QUERY")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "lofi hip hop".to_string())
-    } else {
-        normalized.to_string()
-    }
-}
-
-fn youtube_web_url(value: &str) -> String {
-    let base_addr = replaycore_addr();
-    let base = format!("http://{}", base_addr);
-    let normalized = value.trim();
-
-    if normalized.is_empty() {
-        return format!("{base}/web/youtube");
-    }
-
-    if normalized.starts_with("http://") || normalized.starts_with("https://") {
-        return format!("{base}/web/youtube?url={}", urlencoding::encode(normalized));
-    }
-
-    format!("{base}/web/youtube?q={}", urlencoding::encode(normalized))
-}
-
-fn replaycore_addr() -> SocketAddr {
-    env::var("REPLAYCORE_ADDR")
-        .ok()
-        .and_then(|raw| raw.parse::<SocketAddr>().ok())
-        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 3000)))
-}
-
-fn server_is_reachable(addr: SocketAddr) -> bool {
-    TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok()
-}
-
-fn wait_for_server(addr: SocketAddr, timeout: Duration) -> bool {
-    let attempts = (timeout.as_millis().max(1) / 150).max(1) as usize;
-    for _ in 0..attempts {
-        if server_is_reachable(addr) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(150));
-    }
-
-    false
-}
-
-impl App {
-    fn ensure_youtube_web_server(&mut self) -> Result<()> {
-        let addr = replaycore_addr();
-        if server_is_reachable(addr) {
-            return Ok(());
-        }
-
-        if !self.web_server_started {
-            let context = self.context.clone();
-            std::thread::spawn(move || {
-                if let Err(err) = run_server(context, addr) {
-                    eprintln!("ReplayCore web server stopped unexpectedly: {err}");
-                }
-            });
-            self.web_server_started = true;
-        }
-
-        if wait_for_server(addr, Duration::from_secs(10)) {
-            println!("Local web server is ready on {}", addr);
-            return Ok(());
-        }
-
-        Err(anyhow::anyhow!(
-            "local web server did not start on {}",
-            addr
-        ))
-    }
-}
-
-fn open_url_in_browser(url: &str) -> Result<bool> {
-    #[cfg(target_os = "windows")]
-    {
-        let status = ProcessCommand::new("cmd")
-            .args(["/C", "start", "", url])
-            .status()?;
-        return Ok(status.success());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let status = ProcessCommand::new("open").arg(url).status()?;
-        return Ok(status.success());
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let status = ProcessCommand::new("xdg-open").arg(url).status()?;
-        return Ok(status.success());
-    }
-
-    #[allow(unreachable_code)]
-    Ok(false)
 }

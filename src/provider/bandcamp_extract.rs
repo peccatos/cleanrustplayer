@@ -1,3 +1,4 @@
+// HTML parsing helpers for Bandcamp search and release pages.
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde_json::Value;

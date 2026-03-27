@@ -4,3 +4,7 @@
 .DS_Store
 Thumbs.db
 .env
+winui/
+.cargo/
+# Keep the abandoned frontend workspace out of the backend repo status.
+front-rustplayer/

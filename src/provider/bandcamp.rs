@@ -1,3 +1,4 @@
+// Bandcamp adapter for search and page resolution.
 use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};

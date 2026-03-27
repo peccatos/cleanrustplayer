@@ -65,13 +65,7 @@
         "id": { "type": "string" },
         "kind": {
           "type": "string",
-          "enum": [
-            "local_disk",
-            "streaming_service",
-            "cloud_storage",
-            "shared_library",
-            "remote_catalog"
-          ]
+          "enum": ["local_disk", "bandcamp"]
         },
         "name": { "type": "string" },
         "enabled": { "type": "boolean" },
@@ -97,7 +91,7 @@
         "source_id": { "type": "string" },
         "storage_kind": {
           "type": "string",
-          "enum": ["local_file", "remote_stream", "remote_file", "cached_file"]
+          "enum": ["local_file", "cached_file"]
         },
         "path": { "type": ["string", "null"] },
         "url": { "type": ["string", "null"] },

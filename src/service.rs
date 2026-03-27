@@ -1,3 +1,4 @@
+// Contract builders and validation for the public backend shape.
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -142,17 +143,8 @@ pub fn contract_repeat_mode(repeat_mode: RepeatMode) -> QueueRepeatMode {
 
 pub fn source_records_for_context(
     bandcamp_enabled: bool,
-    youtube_enabled: bool,
 ) -> Vec<SourceRecord> {
-    vec![
-        SourceRecord::local_import(true),
-        SourceRecord::bandcamp(bandcamp_enabled),
-        SourceRecord::youtube(youtube_enabled),
-        SourceRecord::spotify(false),
-        SourceRecord::apple_music(false),
-        SourceRecord::soundcloud(false),
-        SourceRecord::remote_catalog(false),
-    ]
+    vec![SourceRecord::local_import(true), SourceRecord::bandcamp(bandcamp_enabled)]
 }
 
 #[cfg(test)]
@@ -160,9 +152,9 @@ mod tests {
     use anyhow::Result;
 
     use crate::contract::{
-        AvailabilityState, CatalogIndex, CommandEnvelope, OwnershipScope, PlaybackState,
-        QueueEntry, QueueRepeatMode, QueueState, Settings, SourceRecord, StorageKind,
-        TrackIdentity, TrackLocationRecord, TrackMetadata, TrackRecord, UserLibrary,
+        AvailabilityState, CatalogIndex, CommandEnvelope, CommandError, OwnershipScope,
+        PlaybackState, QueueEntry, QueueRepeatMode, QueueState, Settings, SourceRecord,
+        StorageKind, TrackIdentity, TrackLocationRecord, TrackMetadata, TrackRecord, UserLibrary,
     };
 
     use super::ReplayCoreService;
@@ -180,7 +172,17 @@ mod tests {
                     "C:/Music/test.mp3",
                     Some("fingerprint-001".to_string()),
                 ),
-                TrackMetadata::new("Song A", "Artist A", "Album A"),
+                TrackMetadata {
+                    title: "Song A".to_string(),
+                    artist: "Artist A".to_string(),
+                    album: "Album A".to_string(),
+                    album_artist: None,
+                    genre: None,
+                    track_number: None,
+                    disc_number: None,
+                    year: None,
+                    duration_ms: None,
+                },
                 OwnershipScope::UserOwned,
                 AvailabilityState::Available,
                 Some(location_id.clone()),
@@ -199,7 +201,11 @@ mod tests {
 
         let contract = crate::contract::ReplayCoreContract {
             catalog,
-            user_library: UserLibrary::new("user-1"),
+            user_library: UserLibrary {
+                user_id: "user-1".to_string(),
+                saved_track_ids: Vec::new(),
+                hidden_track_ids: Vec::new(),
+            },
             playback: PlaybackState::stopped(1.0),
             queue: QueueState::new(
                 vec![QueueEntry {
@@ -225,7 +231,14 @@ mod tests {
 
     #[test]
     fn command_envelope_error_serializes() {
-        let envelope: CommandEnvelope<()> = CommandEnvelope::error("bad_request", "broken");
+        let envelope: CommandEnvelope<()> = CommandEnvelope {
+            ok: false,
+            data: None,
+            error: Some(CommandError {
+                code: "bad_request".to_string(),
+                message: "broken".to_string(),
+            }),
+        };
         let value = serde_json::to_value(envelope).expect("serialize envelope");
 
         assert_eq!(value["ok"], false);

@@ -1,3 +1,4 @@
+// Local filesystem import helpers for the user's owned collection.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -151,7 +152,7 @@ fn scan_recursive(dir: &Path, out: &mut Vec<Track>) -> Result<()> {
         let path = entry.path();
 
         if path.is_dir() {
-            // рекурсия
+            // Recurse into nested folders.
             let _ = scan_recursive(&path, out);
             continue;
         }
@@ -162,7 +163,7 @@ fn scan_recursive(dir: &Path, out: &mut Vec<Track>) -> Result<()> {
 
         match Track::from_path(path) {
             Ok(track) => out.push(track),
-            Err(_) => continue, // не падаем на битых файлах
+            Err(_) => continue, // Skip broken files instead of failing the entire scan.
         }
     }
 
@@ -182,11 +183,6 @@ pub fn load_music_library(dir: &Path) -> Result<Vec<Track>> {
     }
 
     scan_music_dir(dir)
-}
-
-pub fn load_default_library() -> Result<Vec<Track>> {
-    let dir = default_music_dir();
-    load_music_library(&dir)
 }
 
 pub fn resolve_initial_track(arg: Option<String>, tracks: &[Track]) -> Result<Track> {

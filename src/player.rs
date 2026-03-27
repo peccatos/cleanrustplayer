@@ -1,22 +1,20 @@
+// Local audio playback only; remote streaming paths are intentionally absent.
 use std::fs::File;
-use std::io::{Cursor, Read, Seek};
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use reqwest::blocking::Client;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player as RodioPlayer, Source};
 
 #[derive(Debug, Clone)]
 enum CurrentSource {
     Local(PathBuf),
-    Remote { url: String, bytes: Vec<u8> },
 }
 
 pub struct AudioPlayer {
     device_sink: MixerDeviceSink,
     player: RodioPlayer,
-    http: Client,
     current: Option<CurrentSource>,
     volume: f32,
 }
@@ -26,62 +24,23 @@ impl AudioPlayer {
         let device_sink = DeviceSinkBuilder::open_default_sink()
             .context("failed to open default audio output")?;
         let player = RodioPlayer::connect_new(device_sink.mixer());
-        let http = Client::builder()
-            .build()
-            .context("failed to build HTTP client for remote playback")?;
 
         Ok(Self {
             device_sink,
             player,
-            http,
             current: None,
             volume: 1.0,
         })
-    }
-
-    pub fn output_config_debug(&self) -> String {
-        format!("{:?}", self.device_sink.config())
     }
 
     pub fn load_and_play(&mut self, path: &Path) -> Result<()> {
         self.load_local_from(path, Duration::ZERO)
     }
 
-    pub fn load_url_and_play(&mut self, url: &str) -> Result<()> {
-        let normalized = url.trim();
-        if normalized.is_empty() {
-            anyhow::bail!("empty remote url");
-        }
-
-        let response = self
-            .http
-            .get(normalized)
-            .send()
-            .with_context(|| format!("remote playback request failed: {normalized}"))?;
-
-        let response = response
-            .error_for_status()
-            .with_context(|| format!("remote playback returned error status: {normalized}"))?;
-
-        let bytes = response
-            .bytes()
-            .context("failed to read remote audio bytes")?
-            .to_vec();
-
-        self.load_remote_bytes_from(normalized, bytes, Duration::ZERO)
-    }
-
     pub fn current_path(&self) -> Option<&Path> {
         match &self.current {
             Some(CurrentSource::Local(path)) => Some(path.as_path()),
-            _ => None,
-        }
-    }
-
-    pub fn current_url(&self) -> Option<&str> {
-        match &self.current {
-            Some(CurrentSource::Remote { url, .. }) => Some(url.as_str()),
-            _ => None,
+            None => None,
         }
     }
 
@@ -95,10 +54,6 @@ impl AudioPlayer {
 
     pub fn is_empty(&self) -> bool {
         self.player.empty()
-    }
-
-    pub fn volume(&self) -> f32 {
-        self.volume
     }
 
     pub fn set_volume(&mut self, volume: f32) {
@@ -136,9 +91,6 @@ impl AudioPlayer {
 
         match current {
             CurrentSource::Local(path) => self.load_local_from(&path, offset)?,
-            CurrentSource::Remote { url, bytes } => {
-                self.load_remote_bytes_from(&url, bytes, offset)?
-            }
         }
 
         if was_paused {
@@ -146,10 +98,6 @@ impl AudioPlayer {
         }
 
         Ok(())
-    }
-
-    pub fn queue_len(&self) -> usize {
-        self.player.len()
     }
 
     fn rebuild_player(&mut self) {
@@ -177,14 +125,6 @@ impl AudioPlayer {
 
     fn audio_hint_from_path(path: &Path) -> Option<&'static str> {
         path.extension()
-            .and_then(|ext| ext.to_str())
-            .and_then(Self::audio_hint_from_extension)
-    }
-
-    fn audio_hint_from_url(url: &str) -> Option<&'static str> {
-        let without_query = url.split(['?', '#']).next().unwrap_or(url);
-        Path::new(without_query)
-            .extension()
             .and_then(|ext| ext.to_str())
             .and_then(Self::audio_hint_from_extension)
     }
@@ -226,36 +166,6 @@ impl AudioPlayer {
         }
 
         self.current = Some(CurrentSource::Local(path.to_path_buf()));
-        Ok(())
-    }
-
-    fn load_remote_bytes_from(
-        &mut self,
-        url: &str,
-        bytes: Vec<u8>,
-        offset: Duration,
-    ) -> Result<()> {
-        if bytes.is_empty() {
-            anyhow::bail!("remote audio buffer is empty");
-        }
-
-        let hint = Self::audio_hint_from_url(url);
-        let byte_len = bytes.len() as u64;
-        let decoder = Self::decode(Cursor::new(bytes.clone()), byte_len, hint, url)?;
-
-        self.rebuild_player();
-
-        if offset.is_zero() {
-            self.player.append(decoder);
-        } else {
-            self.player.append(decoder.skip_duration(offset));
-        }
-
-        self.current = Some(CurrentSource::Remote {
-            url: url.to_string(),
-            bytes,
-        });
-
         Ok(())
     }
 }

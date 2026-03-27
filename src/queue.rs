@@ -1,3 +1,4 @@
+// In-memory queue helpers for shell playback control.
 #[derive(Debug, Clone)]
 pub struct PlaybackQueue {
     order: Vec<usize>,
@@ -39,10 +40,6 @@ impl PlaybackQueue {
         }
 
         self.rebuild(track_count, current_index);
-    }
-
-    pub fn current_track_index(&self) -> Option<usize> {
-        self.position.and_then(|pos| self.order.get(pos).copied())
     }
 
     pub fn set_current_track(&mut self, track_index: usize) {

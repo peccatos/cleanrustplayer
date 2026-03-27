@@ -1,3 +1,4 @@
+// Canonical contract types shared by the backend, API, and future clients.
 use std::path::PathBuf;
 
 use blake3::Hash;
@@ -175,8 +176,6 @@ pub enum AvailabilityState {
 #[serde(rename_all = "snake_case")]
 pub enum StorageKind {
     LocalFile,
-    RemoteStream,
-    RemoteFile,
     CachedFile,
 }
 
@@ -184,10 +183,7 @@ pub enum StorageKind {
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     LocalDisk,
-    StreamingService,
-    CloudStorage,
-    SharedLibrary,
-    RemoteCatalog,
+    Bandcamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,26 +216,6 @@ impl TrackIdentity {
             source_id: source_id.into(),
             source_track_id: source_track_id.into(),
             fingerprint,
-        }
-    }
-}
-
-impl TrackMetadata {
-    pub fn new(
-        title: impl Into<String>,
-        artist: impl Into<String>,
-        album: impl Into<String>,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            artist: artist.into(),
-            album: album.into(),
-            album_artist: None,
-            genre: None,
-            track_number: None,
-            disc_number: None,
-            year: None,
-            duration_ms: None,
         }
     }
 }
@@ -306,65 +282,10 @@ impl SourceRecord {
     pub fn bandcamp(enabled: bool) -> Self {
         Self::new(
             "bandcamp",
-            SourceKind::RemoteCatalog,
+            SourceKind::Bandcamp,
             "Bandcamp",
             enabled,
             10,
-            SourceCapabilities::new(false, true, false, false),
-        )
-    }
-
-    pub fn youtube(enabled: bool) -> Self {
-        Self::new(
-            "youtube",
-            SourceKind::StreamingService,
-            "YouTube",
-            enabled,
-            20,
-            SourceCapabilities::new(false, true, false, false),
-        )
-    }
-
-    pub fn spotify(enabled: bool) -> Self {
-        Self::new(
-            "spotify",
-            SourceKind::StreamingService,
-            "Spotify",
-            enabled,
-            30,
-            SourceCapabilities::new(false, true, false, false),
-        )
-    }
-
-    pub fn apple_music(enabled: bool) -> Self {
-        Self::new(
-            "apple_music",
-            SourceKind::StreamingService,
-            "Apple Music",
-            enabled,
-            40,
-            SourceCapabilities::new(false, true, false, false),
-        )
-    }
-
-    pub fn soundcloud(enabled: bool) -> Self {
-        Self::new(
-            "soundcloud",
-            SourceKind::StreamingService,
-            "SoundCloud",
-            enabled,
-            50,
-            SourceCapabilities::new(false, true, false, false),
-        )
-    }
-
-    pub fn remote_catalog(enabled: bool) -> Self {
-        Self::new(
-            "remote_catalog",
-            SourceKind::RemoteCatalog,
-            "Remote catalog",
-            enabled,
-            60,
             SourceCapabilities::new(false, true, false, false),
         )
     }
@@ -410,16 +331,6 @@ impl CatalogIndex {
             sources,
             locations,
             catalog_hash,
-        }
-    }
-}
-
-impl UserLibrary {
-    pub fn new(user_id: impl Into<String>) -> Self {
-        Self {
-            user_id: user_id.into(),
-            saved_track_ids: Vec::new(),
-            hidden_track_ids: Vec::new(),
         }
     }
 }
@@ -475,17 +386,6 @@ impl<T> CommandEnvelope<T> {
             ok: true,
             data: Some(data),
             error: None,
-        }
-    }
-
-    pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            data: None,
-            error: Some(CommandError {
-                code: code.into(),
-                message: message.into(),
-            }),
         }
     }
 }

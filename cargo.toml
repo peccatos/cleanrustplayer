@@ -19,6 +19,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 rand = "0.8"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "json", "derive", "chrono"] }
 tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "time"] }
+tower-http = { version = "0.6", features = ["cors"] }
 urlencoding = "2"
 scraper = "0.24"
 shell-words = "1"

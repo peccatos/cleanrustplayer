@@ -1,3 +1,4 @@
+// Provider account state and capability summaries for the DB layer.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -46,17 +47,6 @@ pub struct ProviderAccountSummary {
     pub sync: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct ProviderAccountSecrets {
-    pub provider_id: String,
-    pub external_account_id: Option<String>,
-    pub scopes: Vec<String>,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub token_expires_at: Option<DateTime<Utc>>,
-    pub settings: Value,
-}
-
 impl ProviderAccountSummary {
     pub fn from_source(source: &SourceRecord) -> Self {
         let capabilities = source.capabilities.as_ref();
@@ -85,34 +75,9 @@ impl ProviderAccountSummary {
     }
 }
 
-impl ProviderAccountSecrets {
-    pub fn new(
-        provider_id: impl Into<String>,
-        external_account_id: Option<String>,
-        scopes: Vec<String>,
-        access_token: Option<String>,
-        refresh_token: Option<String>,
-        token_expires_at: Option<DateTime<Utc>>,
-        settings: Value,
-    ) -> Self {
-        Self {
-            provider_id: provider_id.into(),
-            external_account_id,
-            scopes,
-            access_token,
-            refresh_token,
-            token_expires_at,
-            settings,
-        }
-    }
-}
-
 pub fn source_kind_label(kind: SourceKind) -> &'static str {
     match kind {
         SourceKind::LocalDisk => "local_disk",
-        SourceKind::StreamingService => "streaming_service",
-        SourceKind::CloudStorage => "cloud_storage",
-        SourceKind::SharedLibrary => "shared_library",
-        SourceKind::RemoteCatalog => "remote_catalog",
+        SourceKind::Bandcamp => "bandcamp",
     }
 }

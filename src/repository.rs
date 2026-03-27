@@ -1,3 +1,4 @@
+// SQLx persistence for projections, provider definitions, and provider accounts.
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::env;
@@ -11,6 +12,7 @@ use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::types::Json;
 use sqlx::{Pool, Postgres};
+use tokio::time::timeout;
 
 use crate::contract::{
     CatalogIndex, SourceCapabilities, SourceRecord, TrackIdentity, TrackLocationRecord,
@@ -124,17 +126,6 @@ struct ProviderAccountSummaryRow {
     sync: bool,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct ProviderAccountSecretRow {
-    provider_id: String,
-    external_account_id: Option<String>,
-    scopes: Json<Vec<String>>,
-    access_token_encrypted: Option<String>,
-    refresh_token_encrypted: Option<String>,
-    token_expires_at: Option<DateTime<Utc>>,
-    settings: Json<Value>,
-}
-
 impl SqlxRepository {
     pub async fn connect_from_env() -> Result<Option<Self>> {
         let url = match env::var("REPLAYCORE_DATABASE_URL").or_else(|_| env::var("DATABASE_URL")) {
@@ -147,11 +138,21 @@ impl SqlxRepository {
             return Ok(None);
         }
 
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(url)
-            .await
-            .with_context(|| format!("failed to connect to Postgres at {url}"))?;
+        let connect_timeout = configured_database_connect_timeout();
+        // Keep startup bounded so a dead Docker daemon does not stall the shell.
+        let pool = match timeout(
+            connect_timeout,
+            PgPoolOptions::new()
+                .max_connections(5)
+                .acquire_timeout(connect_timeout)
+                .connect(url),
+        )
+        .await
+        {
+            Ok(Ok(pool)) => pool,
+            Ok(Err(_)) => return Ok(None),
+            Err(_) => return Ok(None),
+        };
 
         Ok(Some(Self { pool }))
     }
@@ -447,70 +448,12 @@ impl SqlxRepository {
             })
     }
 
-    pub async fn load_provider_account_secrets(
-        &self,
-        user_id: &str,
-        provider_id: &str,
-        token_vault: &TokenVault,
-    ) -> Result<Option<crate::provider_accounts::ProviderAccountSecrets>> {
-        let row: Option<ProviderAccountSecretRow> = sqlx::query_as(
-            r#"
-            SELECT
-                provider_id,
-                external_account_id,
-                COALESCE(scopes, '[]'::jsonb) AS scopes,
-                access_token_encrypted,
-                refresh_token_encrypted,
-                token_expires_at,
-                COALESCE(settings, '{}'::jsonb) AS settings
-            FROM provider_accounts
-            WHERE user_id = $1
-              AND provider_id = $2
-            "#,
-        )
-        .bind(user_id)
-        .bind(provider_id)
-        .fetch_optional(&self.pool)
-        .await
-        .context("failed to load provider account secrets")?;
-
-        let Some(row) = row else {
-            return Ok(None);
-        };
-
-        let access_token = match row.access_token_encrypted {
-            Some(ref token) => Some(
-                token_vault
-                    .decrypt(token)
-                    .context("failed to decrypt access token")?,
-            ),
-            None => None,
-        };
-        let refresh_token = match row.refresh_token_encrypted {
-            Some(ref token) => Some(
-                token_vault
-                    .decrypt(token)
-                    .context("failed to decrypt refresh token")?,
-            ),
-            None => None,
-        };
-
-        Ok(Some(crate::provider_accounts::ProviderAccountSecrets::new(
-            row.provider_id,
-            row.external_account_id,
-            row.scopes.0,
-            access_token,
-            refresh_token,
-            row.token_expires_at,
-            row.settings.0,
-        )))
-    }
-
     pub async fn load_projection(
         &self,
         user_id: &str,
         defaults: ProjectionDefaults,
     ) -> Result<CatalogProjection> {
+        // Load persisted state first; local scans are only used when explicitly requested.
         let settings = self.load_settings(user_id).await?;
         let local_music_roots = settings
             .as_ref()
@@ -1113,6 +1056,15 @@ impl SqlxRepository {
 
         Ok(settings)
     }
+}
+
+fn configured_database_connect_timeout() -> Duration {
+    env::var("REPLAYCORE_DATABASE_CONNECT_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_secs(1))
 }
 
 fn choose_identifier(

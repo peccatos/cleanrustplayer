@@ -1,5 +1,9 @@
+// Provider fan-out for search and page resolution.
+use anyhow::{anyhow, Result};
+use std::sync::Arc;
+
 use crate::provider::registry::ProviderRegistry;
-use crate::provider::{ProviderKind, SearchItem, SearchQuery};
+use crate::provider::{MusicProvider, ProviderKind, ResolvedMedia, SearchItem, SearchQuery};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderSearchError {
@@ -12,12 +16,6 @@ pub struct SearchReport {
     pub query: String,
     pub items: Vec<SearchItem>,
     pub errors: Vec<ProviderSearchError>,
-}
-
-impl SearchReport {
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
 }
 
 #[derive(Clone)]
@@ -83,4 +81,51 @@ impl SearchService {
             errors,
         }
     }
+
+    pub fn resolve(&self, url: &str) -> Result<ResolvedMedia> {
+        let normalized = url.trim();
+        if normalized.is_empty() {
+            return Err(anyhow!("empty url"));
+        }
+
+        let providers = self.resolve_providers_for_url(normalized);
+        if providers.is_empty() {
+            return Err(anyhow!("no resolve-capable provider is registered"));
+        }
+
+        let mut last_error = None;
+        for provider in providers {
+            match provider.resolve_page(normalized) {
+                Ok(media) => return Ok(media),
+                Err(err) => last_error = Some(err),
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("unable to resolve url")))
+    }
+
+    fn resolve_providers_for_url(&self, url: &str) -> Vec<Arc<dyn MusicProvider>> {
+        let registry = self.registry();
+        let normalized = url.trim();
+
+        let mut providers = Vec::new();
+
+        if is_bandcamp_url(normalized) {
+            if let Some(provider) = registry.find(ProviderKind::Bandcamp) {
+                providers.push(provider);
+            }
+        } else {
+            for provider in registry.providers() {
+                if provider.capabilities().resolve {
+                    providers.push(provider.clone());
+                }
+            }
+        }
+
+        providers
+    }
+}
+
+fn is_bandcamp_url(url: &str) -> bool {
+    url.contains("bandcamp.com")
 }

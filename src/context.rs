@@ -1,3 +1,4 @@
+// Build either local-only or database-backed application state.
 use std::convert::TryFrom;
 use std::env;
 use std::future::Future;
@@ -13,7 +14,6 @@ use crate::contract::{
 use crate::music::library::{default_music_dir, load_music_library, Track};
 use crate::provider::bandcamp::BandcampProvider;
 use crate::provider::registry::ProviderRegistry;
-use crate::provider::youtube::YouTubeProvider;
 use crate::provider::ProviderHttpConfig;
 use crate::provider::ProviderKind;
 use crate::provider_accounts::{ProviderAccountSummary, ProviderAccountWrite};
@@ -39,99 +39,77 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn bootstrap() -> Result<Self> {
+        Self::bootstrap_local()
+    }
+
+    pub fn bootstrap_local() -> Result<Self> {
         dotenvy::dotenv().ok();
         let user_id = configured_user_id();
         let bandcamp_enabled = configured_bandcamp_enabled();
-        let youtube_api_key = configured_youtube_api_key();
-        let youtube_enabled = youtube_api_key.is_some();
         let defaults = ProjectionDefaults {
             local_music_roots: configured_music_roots(),
             volume_step: configured_volume_step(),
             cache_enabled: configured_cache_enabled(),
         };
-        let repository = block_on_database(SqlxRepository::connect_from_env())?;
-        let token_vault = match TokenVault::from_env() {
-            Ok(token_vault) => token_vault,
-            Err(err) => {
-                eprintln!("warning: token encryption disabled: {err}");
-                None
-            }
-        };
-
-        let mut local_music_roots = defaults.local_music_roots.clone();
-        let mut volume_step = defaults.volume_step;
-        let mut cache_enabled = defaults.cache_enabled;
-        let mut saved_track_ids = Vec::new();
-        let mut hidden_track_ids = Vec::new();
 
         let mut registry = ProviderRegistry::new();
         if bandcamp_enabled {
             registry.register(BandcampProvider::new(ProviderHttpConfig::default())?);
         }
-        if let Some(api_key) = youtube_api_key.clone() {
-            registry.register(YouTubeProvider::new(
-                api_key,
-                ProviderHttpConfig::default(),
-            )?);
-        }
 
         let search_service = SearchService::new(registry.clone());
-        let (tracks, catalog) = if let Some(repo) = repository.as_ref() {
-            block_on_database(repo.migrate())?;
-            block_on_database(repo.seed_provider_definitions(&source_records_for_context(
-                bandcamp_enabled,
-                youtube_enabled,
-            )))?;
-            let projection = block_on_database(repo.load_projection(&user_id, defaults.clone()))?;
-            local_music_roots = projection.local_music_roots.clone();
-            volume_step = projection.volume_step;
-            cache_enabled = projection.cache_enabled;
-            saved_track_ids = projection.saved_track_ids.clone();
-            hidden_track_ids = projection.hidden_track_ids.clone();
-
-            if projection.catalog.tracks.is_empty() {
-                let mut scanned_tracks = collect_tracks(&local_music_roots)?;
-                sort_tracks(&mut scanned_tracks);
-                let scanned_catalog = build_catalog_with_sources(
-                    &scanned_tracks,
-                    if projection.catalog.sources.is_empty() {
-                        source_records_for_context(bandcamp_enabled, youtube_enabled)
-                    } else {
-                        projection.catalog.sources.clone()
-                    },
-                );
-                let scanned_projection = CatalogProjection {
-                    tracks: scanned_tracks.clone(),
-                    catalog: scanned_catalog.clone(),
-                    saved_track_ids: saved_track_ids.clone(),
-                    hidden_track_ids: hidden_track_ids.clone(),
-                    local_music_roots: local_music_roots.clone(),
-                    volume_step,
-                    cache_enabled,
-                };
-                block_on_database(repo.save_projection(&user_id, &scanned_projection))?;
-                (scanned_tracks, scanned_catalog)
-            } else {
-                (projection.tracks, projection.catalog)
-            }
-        } else {
-            let mut scanned_tracks = collect_tracks(&local_music_roots)?;
-            sort_tracks(&mut scanned_tracks);
-            let catalog = build_catalog(&scanned_tracks, bandcamp_enabled, youtube_enabled);
-            (scanned_tracks, catalog)
-        };
 
         Ok(Self {
             user_id,
-            local_music_roots,
-            tracks,
-            catalog,
-            saved_track_ids,
-            hidden_track_ids,
+            local_music_roots: defaults.local_music_roots,
+            tracks: Vec::new(),
+            catalog: build_catalog(&[], bandcamp_enabled),
+            saved_track_ids: Vec::new(),
+            hidden_track_ids: Vec::new(),
             search_service,
-            volume_step,
-            cache_enabled,
-            repository,
+            volume_step: defaults.volume_step,
+            cache_enabled: defaults.cache_enabled,
+            repository: None,
+            token_vault: None,
+        })
+    }
+
+    pub fn bootstrap_database() -> Result<Self> {
+        dotenvy::dotenv().ok();
+        let user_id = configured_user_id();
+        let bandcamp_enabled = configured_bandcamp_enabled();
+        let defaults = ProjectionDefaults {
+            local_music_roots: configured_music_roots(),
+            volume_step: configured_volume_step(),
+            cache_enabled: configured_cache_enabled(),
+        };
+        let repository = block_on_database(SqlxRepository::connect_from_env())?
+            .context("database mode requires a reachable Postgres instance")?;
+        let token_vault = TokenVault::from_env()?;
+
+        let mut registry = ProviderRegistry::new();
+        if bandcamp_enabled {
+            registry.register(BandcampProvider::new(ProviderHttpConfig::default())?);
+        }
+
+        let search_service = SearchService::new(registry.clone());
+        block_on_database(repository.migrate())?;
+        block_on_database(repository.seed_provider_definitions(&source_records_for_context(
+            bandcamp_enabled,
+        )))?;
+        let projection = block_on_database(repository.load_projection(&user_id, defaults))?;
+
+        Ok(Self {
+            user_id,
+            local_music_roots: projection.local_music_roots,
+            tracks: projection.tracks,
+            catalog: projection.catalog,
+            saved_track_ids: projection.saved_track_ids,
+            hidden_track_ids: projection.hidden_track_ids,
+            search_service,
+            volume_step: projection.volume_step,
+            cache_enabled: projection.cache_enabled,
+            repository: Some(repository),
             token_vault,
         })
     }
@@ -149,12 +127,7 @@ impl AppContext {
                     .registry()
                     .find(ProviderKind::Bandcamp)
                     .is_some();
-                let youtube_enabled = self
-                    .search_service
-                    .registry()
-                    .find(ProviderKind::YouTube)
-                    .is_some();
-                source_records_for_context(bandcamp_enabled, youtube_enabled)
+                source_records_for_context(bandcamp_enabled)
             } else {
                 self.catalog.sources.clone()
             },
@@ -174,6 +147,11 @@ impl AppContext {
         }
 
         Ok(self.tracks.len())
+    }
+
+    pub fn set_local_music_roots(&mut self, roots: Vec<PathBuf>) -> Result<usize> {
+        self.local_music_roots = roots;
+        self.reload_local_library()
     }
 
     pub fn provider_accounts_snapshot(&self) -> Result<Vec<ProviderAccountSummary>> {
@@ -224,12 +202,8 @@ impl AppContext {
 pub fn build_catalog(
     tracks: &[Track],
     bandcamp_enabled: bool,
-    youtube_enabled: bool,
 ) -> CatalogIndex {
-    build_catalog_with_sources(
-        tracks,
-        source_records_for_context(bandcamp_enabled, youtube_enabled),
-    )
+    build_catalog_with_sources(tracks, source_records_for_context(bandcamp_enabled))
 }
 
 pub fn build_catalog_with_sources(
@@ -362,14 +336,6 @@ fn configured_bandcamp_enabled() -> bool {
             )
         })
         .unwrap_or(true)
-}
-
-fn configured_youtube_api_key() -> Option<String> {
-    env::var("REPLAYCORE_YOUTUBE_API_KEY")
-        .ok()
-        .or_else(|| env::var("YOUTUBE_API_KEY").ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn collect_tracks(roots: &[PathBuf]) -> Result<Vec<Track>> {

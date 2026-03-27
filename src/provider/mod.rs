@@ -1,3 +1,4 @@
+// Provider abstractions for the small supported provider set.
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -6,14 +7,12 @@ use std::time::Duration;
 pub mod bandcamp;
 pub mod bandcamp_extract;
 pub mod registry;
-pub mod youtube;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Local,
     Bandcamp,
-    YouTube,
 }
 
 impl fmt::Display for ProviderKind {
@@ -21,7 +20,6 @@ impl fmt::Display for ProviderKind {
         match self {
             ProviderKind::Local => write!(f, "local"),
             ProviderKind::Bandcamp => write!(f, "bandcamp"),
-            ProviderKind::YouTube => write!(f, "youtube"),
         }
     }
 }
@@ -60,10 +58,6 @@ impl SearchQuery {
 
     pub fn normalized_text(&self) -> String {
         self.text.trim().to_string()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.normalized_text().is_empty()
     }
 }
 

@@ -1,3 +1,4 @@
+// Envelope encryption for provider tokens at rest.
 use std::env;
 
 use aes_gcm::aead::{Aead, KeyInit};
@@ -6,8 +7,6 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use rand::rngs::OsRng;
 use rand::RngCore;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 const TOKEN_PREFIX: &str = "v1:";
 
@@ -65,42 +64,5 @@ impl TokenVault {
         payload.extend_from_slice(&ciphertext);
 
         Ok(format!("{}{}", TOKEN_PREFIX, STANDARD.encode(payload)))
-    }
-
-    pub fn decrypt(&self, encoded: &str) -> Result<String> {
-        let bytes = self.decode_payload(encoded)?;
-        if bytes.len() < 12 {
-            anyhow::bail!("encrypted token payload is too short");
-        }
-
-        let (nonce_bytes, ciphertext) = bytes.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
-        let plaintext = self
-            .cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| anyhow::anyhow!("failed to decrypt token"))?;
-
-        String::from_utf8(plaintext).context("decrypted token is not valid UTF-8")
-    }
-
-    pub fn encrypt_json<T: Serialize>(&self, value: &T) -> Result<String> {
-        let serialized = serde_json::to_string(value).context("failed to serialize token data")?;
-        self.encrypt(&serialized)
-    }
-
-    pub fn decrypt_json<T: DeserializeOwned>(&self, encoded: &str) -> Result<T> {
-        let plaintext = self.decrypt(encoded)?;
-        serde_json::from_str(&plaintext).context("failed to deserialize token data")
-    }
-
-    fn decode_payload(&self, encoded: &str) -> Result<Vec<u8>> {
-        let encoded = encoded.trim();
-        let encoded = encoded
-            .strip_prefix(TOKEN_PREFIX)
-            .with_context(|| format!("encrypted token is missing {} prefix", TOKEN_PREFIX))?;
-
-        STANDARD
-            .decode(encoded)
-            .context("failed to decode encrypted token payload")
     }
 }
