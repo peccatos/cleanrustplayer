@@ -37,16 +37,6 @@ impl ReplayCoreService {
         })
     }
 
-    pub fn headless_runtime(context: &AppContext) -> ContractRuntime {
-        ContractRuntime {
-            playback: PlaybackState::stopped(1.0),
-            queue_order: (0..context.catalog.tracks.len()).collect(),
-            current_queue_index: None,
-            repeat_mode: QueueRepeatMode::Off,
-            shuffle_enabled: false,
-        }
-    }
-
     pub fn build_contract(
         &self,
         context: &AppContext,
@@ -133,7 +123,7 @@ impl ReplayCoreService {
     }
 }
 
-pub fn contract_repeat_mode(repeat_mode: RepeatMode) -> QueueRepeatMode {
+pub(crate) fn contract_repeat_mode(repeat_mode: RepeatMode) -> QueueRepeatMode {
     match repeat_mode {
         RepeatMode::Off => QueueRepeatMode::Off,
         RepeatMode::One => QueueRepeatMode::One,
@@ -146,6 +136,8 @@ pub fn source_records_for_context(
 ) -> Vec<SourceRecord> {
     vec![SourceRecord::local_import(true), SourceRecord::bandcamp(bandcamp_enabled)]
 }
+
+pub mod playback_resolver;
 
 #[cfg(test)]
 mod tests {

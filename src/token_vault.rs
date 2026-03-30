@@ -5,8 +5,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::random;
 
 const TOKEN_PREFIX: &str = "v1:";
 
@@ -51,8 +50,7 @@ impl TokenVault {
     }
 
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
-        let mut nonce_bytes = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce_bytes: [u8; 12] = random();
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = self

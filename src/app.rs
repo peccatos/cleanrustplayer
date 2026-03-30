@@ -34,6 +34,10 @@ pub struct App {
 impl App {
     pub fn bootstrap(initial_source: Option<String>) -> Result<Self> {
         let context = AppContext::bootstrap()?;
+        Self::from_context(context, initial_source)
+    }
+
+    pub fn from_context(context: AppContext, initial_source: Option<String>) -> Result<Self> {
         let contract_service = ReplayCoreService::new()?;
         let current_index = None;
         let queue = PlaybackQueue::new(context.tracks.len(), current_index, false);
@@ -825,31 +829,35 @@ impl App {
 
     fn print_help(&self) {
         println!("Commands:");
-        println!("  open <path>           - open a local file");
-        println!("  list                  - show scanned tracks");
-        println!("  queue                 - show playback queue");
-        println!("  find <query>          - search local library");
-        println!("  queuefind <query>     - search current queue");
-        println!("  search <query>        - search provider layer");
-        println!("  resolve <url>         - resolve provider page into preview stream");
-        println!("  play <index|query>    - play track by index or first text match");
-        println!("  playname <query>      - play first library match");
-        println!("  contract              - print ReplayCore contract JSON");
-        println!("  next                  - play next track in queue");
-        println!("  prev                  - play previous track in queue");
-        println!("  pause                 - pause playback");
-        println!("  resume                - resume playback");
-        println!("  stop                  - stop playback");
-        println!("  volume <0..1>         - set volume");
-        println!("  seek <sec>            - seek in current source");
-        println!("  pos                   - show current position");
-        println!("  repeat off|one|all    - set repeat mode");
-        println!("  shuffle on|off        - toggle shuffle");
-        println!("  status                - show player status");
-        println!("  snapshot              - print UI-friendly state snapshot");
-        println!("  reload                - rescan default music dir");
-        println!("  help                  - show help");
-        println!("  exit                  - quit");
+        println!("  open <path>");
+        println!("  list");
+        println!("  queue");
+        println!("  find <query>");
+        println!("  queuefind <query>");
+        println!("  search <query>");
+        println!("  resolve <url>");
+        println!("  providers");
+        println!("  provider list|status");
+        println!("  provider set <id> <json>");
+        println!("  provider clear <id>");
+        println!("  play <index|query>");
+        println!("  playname <query>");
+        println!("  contract");
+        println!("  next");
+        println!("  prev");
+        println!("  pause");
+        println!("  resume");
+        println!("  stop");
+        println!("  volume <0..1>");
+        println!("  seek <sec>");
+        println!("  pos");
+        println!("  repeat off|one|all");
+        println!("  shuffle on|off");
+        println!("  status");
+        println!("  snapshot");
+        println!("  reload");
+        println!("  help");
+        println!("  exit");
     }
 }
 

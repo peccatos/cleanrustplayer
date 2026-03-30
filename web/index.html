@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReplayCore Library</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">ReplayCore</p>
+      <h1>Локальная библиотека треков</h1>
+      <p class="lead">
+        Это простой интерфейс поверх твоего Rust backend. Сервер сам сканирует папки
+        с музыкой, пишет метаданные в SQLite и отдаёт локальные аудиофайлы через `Range`-stream.
+      </p>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <label class="field" for="searchInput">
+          <span class="field__label">Фильтр по библиотеке</span>
+          <input id="searchInput" type="search" placeholder="Ищи по названию, артисту или альбому" />
+        </label>
+        <div class="toolbar__actions">
+          <button id="rescanBtn" type="button">Пересканировать</button>
+        </div>
+      </div>
+
+      <div class="status-grid">
+        <div class="fact">
+          <dt>Сервер</dt>
+          <dd id="healthText">Проверяем...</dd>
+        </div>
+        <div class="fact">
+          <dt>Треков</dt>
+          <dd id="trackCountText">—</dd>
+        </div>
+        <div class="fact fact--wide">
+          <dt>Папки</dt>
+          <dd id="rootsText">—</dd>
+        </div>
+      </div>
+
+      <p id="statusMessage" class="status" data-tone="neutral">
+        Backend ещё не ответил.
+      </p>
+
+      <div class="player">
+        <div class="player__meta">
+          <p class="meta__label">Сейчас выбрано</p>
+          <h2 id="currentTitle" class="meta__title">Ничего не играет</h2>
+          <p id="currentSubtitle" class="meta__subtitle">
+            Выбери трек из списка ниже. Плеер работает через `/api/tracks/:id/stream`.
+          </p>
+        </div>
+        <audio id="audioPlayer" controls preload="metadata"></audio>
+      </div>
+
+      <section class="catalog">
+        <div class="catalog__header">
+          <p class="meta__label">Каталог</p>
+          <p id="catalogInfo" class="catalog__info">Загрузка списка треков...</p>
+        </div>
+        <div id="tracksList" class="tracks" aria-live="polite"></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,48 +1,29 @@
-// Thin entrypoint that routes CLI commands, local server startup, and explicit DB mode.
-mod api;
-mod app;
-mod command;
-mod context;
-mod contract;
-mod music;
-mod player;
-mod provider;
-mod provider_accounts;
-mod queue;
-mod repository;
-mod search;
-mod service;
-mod snapshot;
-mod token_vault;
-
 use std::env;
-use std::net::SocketAddr;
 
-use crate::api::run_server;
-use crate::app::App;
-use crate::command::Command;
-use crate::context::AppContext;
 use anyhow::Result;
+
+use rust_player::app::App;
+use rust_player::command::Command;
+use rust_player::config::AppConfig;
+use rust_player::context::AppContext;
+use rust_player::web;
 
 fn main() -> Result<()> {
     dotenvy::dotenv().ok();
+    let config = AppConfig::from_env()?;
     let args: Vec<String> = env::args().skip(1).collect();
 
     match args.first().map(|s| s.as_str()) {
         None => {
-            let mut app = App::bootstrap(None)?;
+            let context = AppContext::bootstrap_local_music(&config)?;
+            if context.tracks.is_empty() {
+                println!("вставьте путь");
+            }
+            let mut app = App::from_context(context, None)?;
             app.run()
         }
+        Some("serve") => run_serve_mode(config),
         Some("db") => run_db_mode(&args[1..]),
-        Some("serve") | Some("--serve") => {
-            let context = AppContext::bootstrap()?;
-            let addr = env::var("REPLAYCORE_ADDR")
-                .ok()
-                .and_then(|value| value.parse::<SocketAddr>().ok())
-                .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 3000)));
-
-            run_server(context, addr)
-        }
         Some(command) if is_read_only_command(command) => {
             let mut app = App::bootstrap(None)?;
             app.execute_parsed_command(Command::parse_parts(args))?;
@@ -119,17 +100,14 @@ fn looks_like_audio_source(source: &str) -> bool {
 fn print_usage() {
     println!("ReplayCore CLI");
     println!("Usage:");
+    println!("  rust-player");
     println!("  rust-player serve");
-    println!("  rust-player db <status|migrate|sync|serve>");
+    println!("  rust-player db <status|migrate|sync>");
     println!("  rust-player help");
-    println!(
-        "  rust-player <contract|snapshot|status|list|queue|find|queuefind|search|resolve|providers|provider> ..."
-    );
-    println!("  rust-player <play|playname|open|next|prev|pause|resume|stop|volume|seek|pos|repeat|shuffle|reload> ...");
     println!("  rust-player <audio-file-path>");
     println!();
     println!("Top-level single-shot commands exit after running.");
-    println!("Playback commands start or reuse the interactive shell.");
+    println!("No-arg start uses the local library in ./library by default.");
 }
 
 fn run_db_mode(args: &[String]) -> Result<()> {
@@ -154,15 +132,6 @@ fn run_db_mode(args: &[String]) -> Result<()> {
             println!("synced: {} track(s)", tracks);
             Ok(())
         }
-        Some("serve") => {
-            let context = AppContext::bootstrap_database()?;
-            let addr = env::var("REPLAYCORE_ADDR")
-                .ok()
-                .and_then(|value| value.parse::<SocketAddr>().ok())
-                .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 3000)));
-
-            run_server(context, addr)
-        }
         Some(other) => {
             eprintln!("unknown db command: {}", other);
             print_db_usage();
@@ -171,13 +140,20 @@ fn run_db_mode(args: &[String]) -> Result<()> {
     }
 }
 
+fn run_serve_mode(config: AppConfig) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    runtime.block_on(web::serve(config))
+}
+
 fn print_db_usage() {
     println!("ReplayCore DB mode");
     println!("Usage:");
     println!("  rust-player db status");
     println!("  rust-player db migrate");
     println!("  rust-player db sync");
-    println!("  rust-player db serve");
 }
 
 fn print_db_status(context: &AppContext) {
@@ -188,3 +164,7 @@ fn print_db_status(context: &AppContext) {
     println!("hidden: {}", context.hidden_track_ids.len());
     println!("roots: {}", context.local_music_roots.len());
 }
+
+
+//у нас слишком много зависимостей, и мы не хотим их все грузить в db режиме, так что там будет свой контекст без музыки и провайдеров. Поэтому эти команды будут работать только в полном режиме. Но это не страшно, потому что они нужны только для отладки и администрирования, а для этого полный режим вполне подходит.
+//смотри, если уже есть зависимая библиотека, мы можем разветвление и направить #cloud-lib.rs и прописать код для синхронизации с облаком.

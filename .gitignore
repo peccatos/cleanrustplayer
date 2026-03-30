@@ -1,10 +1,27 @@
-/target
+@"
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Tauri
+/src-tauri/target/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Env
+.env
+.env.*
+
+# Logs
 *.log
-*.tmp
+
+# OS / IDE
 .DS_Store
 Thumbs.db
-.env
-winui/
-.cargo/
-# Keep the abandoned frontend workspace out of the backend repo status.
-front-rustplayer/
+.vscode/
+.idea/
+"@ | Set-Content .gitignoreget-google-refresh-token.ps1

@@ -8,8 +8,6 @@ use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::Accessor;
 use lofty::probe::Probe;
 
-pub const DEFAULT_MUSIC_DIR: &str = "C:\\Users\\name\\Music";
-
 const SUPPORTED_EXT: &[&str] = &["mp3", "flac", "wav", "m4a"];
 
 #[derive(Debug, Clone)]
@@ -171,10 +169,7 @@ fn scan_recursive(dir: &Path, out: &mut Vec<Track>) -> Result<()> {
 }
 
 pub fn default_music_dir() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .map(|home| home.join("Music"))
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MUSIC_DIR))
+    PathBuf::from("library")
 }
 
 pub fn load_music_library(dir: &Path) -> Result<Vec<Track>> {

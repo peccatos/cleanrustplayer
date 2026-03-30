@@ -1,93 +1,113 @@
 # ReplayCore
 
-ReplayCore is a local-first Rust music backend and CLI.
+ReplayCore is now a pragmatic Rust music backend with two modes:
 
-This repository keeps the backend only:
-- local library import and playback
-- an explicit Postgres-backed `db` mode
-- Bandcamp provider support
-- JSON contract generation and validation
+- old CLI / playback shell
+- simple web server for a local public music library
 
-The abandoned Tauri frontend layer is ignored by the root project and kept out of git status.
+The new `serve` mode is the one that matters for this MVP.
 
-## Project layout
+## What the MVP does
 
-- `src/` - backend, CLI, API, playback, search, and contract code
-- `migrations/` - SQLx migrations
-- `docker-compose.yml` - local Postgres for explicit database mode
-- `.env.example` - sample environment variables
+- scans local music folders from disk
+- stores track metadata in SQLite through `sqlx`
+- serves a simple HTML interface directly from Rust
+- exposes `GET /api/tracks`
+- exposes `POST /api/library/rescan`
+- streams local audio files through `GET /api/tracks/:id/stream`
+- supports `Range` requests for browser audio playback
+
+No Google Drive is needed for this mode.
 
 ## Quick start
 
-Run the local backend shell:
+1. Point the library to your music folder.
+2. Start the web server.
+3. Open the local page in the browser.
 
-```text
-cargo run -- status
+Example PowerShell setup:
+
+```powershell
+$env:REPLAYCORE_LOCAL_MUSIC_ROOT = "D:\music-library"
 cargo run -- serve
 ```
 
-Work with the database only when you need persistence or provider account storage:
+Default server address:
 
 ```text
-docker compose up -d
-cargo run -- db status
-cargo run -- db migrate
-cargo run -- db sync
-cargo run -- db serve
+http://127.0.0.1:3001
 ```
 
-## Local music
+## Important env vars
 
-Point ReplayCore at your music folder with one of these variables:
+Local music roots:
 
 ```text
-REPLAYCORE_LOCAL_MUSIC_ROOT=C:\Music
-REPLAYCORE_LOCAL_MUSIC_ROOTS=C:\Music;D:\Archive\Music
+REPLAYCORE_LOCAL_MUSIC_ROOT=D:\music-library
+REPLAYCORE_LOCAL_MUSIC_ROOTS=D:\music-library;D:\archive\music
 ```
 
-If no folder is configured, the app falls back to the default user Music directory.
-
-## Database mode
-
-Database mode is explicit on purpose. The normal shell does not wait on Postgres.
-
-Required or useful variables for `db` mode:
+Web server:
 
 ```text
-DATABASE_URL=postgres://replaycore:replaycore@127.0.0.1:5432/replaycore
-REPLAYCORE_DATABASE_CONNECT_TIMEOUT_MS=1000
-REPLAYCORE_TOKEN_ENCRYPTION_KEY=base64-encoded-32-byte-key
+REPLAYCORE_HTTP_HOST=127.0.0.1
+REPLAYCORE_HTTP_PORT=3001
+REPLAYCORE_SQLITE_PATH=data\replaycore.sqlite3
 ```
 
 ## Commands
 
-Useful shell commands:
+Web mode:
 
 ```text
-contract
-status
-list
-queue
-find <query>
-search <query>
-resolve <url>
-providers
-provider set <id> '<json>'
-provider clear <id>
-open <path>
-play <index|query>
-next
-prev
-pause
-resume
-stop
-volume <0..1>
-seek <seconds>
-reload
+cargo run -- serve
 ```
 
-## Notes
+Old CLI mode still exists:
 
-- Local disk is the source for import, not the long-term source of truth.
-- Postgres is optional and only used in explicit `db` mode.
-- YouTube and the old UI experiments were removed from the active root project.
+```text
+cargo run
+cargo run -- list
+cargo run -- play 0
+```
+
+Explicit Postgres `db` mode also still exists for the older backend flow:
+
+```text
+cargo run -- db status
+cargo run -- db migrate
+cargo run -- db sync
+```
+
+## API
+
+Useful routes in `serve` mode:
+
+```text
+GET  /api/health
+GET  /api/tracks
+GET  /api/tracks/:id
+GET  /api/tracks/:id/stream
+POST /api/library/rescan
+```
+
+## Storage choices
+
+For this MVP:
+
+- audio files live on local disk
+- metadata lives in SQLite
+- frontend is static and served by the Rust backend itself
+
+That is the right level of complexity for now.
+
+## What this deliberately does not do yet
+
+- auth
+- upload UI
+- delete/edit metadata UI
+- playlists
+- multi-user logic
+- remote cloud storage
+
+If you add all that now, you will bury the project.

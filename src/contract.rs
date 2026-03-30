@@ -140,6 +140,7 @@ pub struct ReplayCoreContract {
     pub settings: Settings,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandEnvelope<T> {
     pub ok: bool,
@@ -149,6 +150,7 @@ pub struct CommandEnvelope<T> {
     pub error: Option<CommandError>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandError {
     pub code: String,
@@ -289,6 +291,7 @@ impl SourceRecord {
             SourceCapabilities::new(false, true, false, false),
         )
     }
+
 }
 
 impl TrackLocationRecord {
@@ -335,19 +338,6 @@ impl CatalogIndex {
     }
 }
 
-impl PlaybackState {
-    pub fn stopped(volume: f64) -> Self {
-        Self {
-            status: PlaybackStatus::Stopped,
-            current_track_id: None,
-            current_location_id: None,
-            position_ms: 0,
-            volume,
-            muted: false,
-        }
-    }
-}
-
 impl QueueState {
     pub fn new(
         entries: Vec<QueueEntry>,
@@ -380,6 +370,7 @@ impl Settings {
     }
 }
 
+#[allow(dead_code)]
 impl<T> CommandEnvelope<T> {
     pub fn ok(data: T) -> Self {
         Self {
