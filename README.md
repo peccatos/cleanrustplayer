@@ -1,5 +1,9 @@
 # ReplayCore
 
+чтобы запустить, ты должен написать cargo run, там будет список команд, потом ты пишешь cargo run --serve в другом терме, там будет ссылка на локальный хост, переходишь и слушаешь свою музыку
+
+
+
 ReplayCore is now a pragmatic Rust music backend with two modes:
 
 - old CLI / playback shell
