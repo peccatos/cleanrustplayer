@@ -25,3 +25,4 @@ Thumbs.db
 .vscode/
 .idea/
 "@ | Set-Content .gitignoreget-google-refresh-token.ps1
+get-google-refresh-token.ps1
